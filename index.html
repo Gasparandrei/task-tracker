@@ -95,6 +95,8 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .filters { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: .88rem; min-height: 36px; }
 .chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.sync-stat { font-weight: 700; margin: 0; }
+.sync-msg { margin: 0; font-size: .9rem; font-weight: 600; }
 .chip-rm { background: transparent; border-style: dashed; color: var(--muted); }
 .chip-rm:hover { color: var(--fg); border-color: var(--line-strong); }
 
@@ -295,7 +297,7 @@ svg.snow { width: 14px; height: 14px; fill: none; stroke: var(--ice); stroke-wid
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field > label, .field > legend, .field > .flabel { font-size: .85rem; font-weight: 700; color: var(--muted); padding: 0; }
 fieldset.field { border: 0; margin: 0; padding: 0; }
-input[type="text"], input[type="date"], input[type="time"], input[type="number"] { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 12px; padding: 11px 12px; width: 100%; min-width: 0; min-height: 44px; }
+input[type="text"], input[type="email"], input[type="password"], input[type="date"], input[type="time"], input[type="number"] { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 12px; padding: 11px 12px; width: 100%; min-width: 0; min-height: 44px; }
 textarea { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 12px; padding: 11px 12px; width: 100%; min-width: 0; resize: vertical; font: inherit; color: var(--fg); }
 .t-desc { color: var(--muted); font-size: .88rem; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .swatches { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
@@ -630,6 +632,11 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   // The installable app (PWA): neither the desktop app nor the Claude page, so data lives in this browser's storage.
   var WEB = !DESK && !(window.claude && window.claude.use);
   var WEB_KEY = "tt-data";
+  // Sync between devices (PC app and installable app): the user's own Firebase project, used through its web APIs.
+  // These keys only name the project; the database rules let each account reach nothing but its own data.
+  var FB = { key: "AIzaSyCSVI-OdNCY6BMRGP0Mbs179IK01FSrzro", project: "task-tracker-162c6" };
+  var SYNC_KEY = "tt-sync";
+  var CLOUD = !!(DESK || WEB);
   var deskInfo = { packaged: true };
   var PRIMARIES = [["Teal", "#0A8580"], ["Blue", "#2457D6"], ["Purple", "#6B46C1"], ["Green", "#2B7A3D"], ["Slate", "#37475A"], ["Orange", "#B85C0E"]];
   var SECONDARIES = [["Red", "#D9383F"], ["Orange", "#E8710A"], ["Pink", "#D6409F"], ["Blue", "#2F7BEA"], ["Purple", "#8B5CF6"], ["Yellow", "#F5B800"]];
@@ -1002,6 +1009,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     (async function () {
       try {
         do { queued = false; var snap = JSON.stringify(state); await ref.set(JSON.parse(snap)); lastSaved = snap; } while (queued);
+        syncSoon();
       } catch (e) {
         toast("Could not save. Your last change may be lost on reload.");
       } finally { saving = false; }
@@ -1988,6 +1996,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     v.appendChild(card);
     if (DESK) v.appendChild(deskCard());
     if (WEB && /^https?:$/.test(location.protocol)) v.appendChild(installCard());
+    if (CLOUD) v.appendChild(syncCard());
 
     var vc = el("section", "card");
     vc.appendChild(el("h2", "", "Vacation"));
@@ -2678,6 +2687,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     });
     // Ask the browser not to clear the app's storage when space runs low (matters most on phones).
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    startSync();
     if (!state.settings.name && !state.settings.asked) askName();
     if (/[?&]action=add\b/.test(location.search)) { try { history.replaceState(null, "", location.pathname); } catch (e) {} view = "tasks"; render(); openSheet(null); }
   }
@@ -2735,6 +2745,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       render();
       pushPrefs();
       if (s0.dirty || !raw) save();
+      startSync();
       if (!state.settings.name && !state.settings.asked) askName();
     } catch (e) { startLocal(); }
   }
@@ -2768,6 +2779,234 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         }
       }, function () {});
     } catch (e) { startLocal(); }
+  }
+
+  // ---------- sync between devices ----------
+  // One document per account (users/{uid}/data/app) holds the whole data as JSON. Each device remembers the
+  // version it last synced (`base`), so it can tell what changed on which side and keep both (merge3).
+  var sync = { uid: null, email: "", refresh: "", base: null, idToken: "", exp: 0, busy: false, again: false, state: "", at: 0, err: "" };
+  var syncDraft = { email: "", pw: "", msg: "", busy: false }, syncTimer = null;
+
+  function syncKeep() {
+    try {
+      if (sync.uid) localStorage.setItem(SYNC_KEY, JSON.stringify({ uid: sync.uid, email: sync.email, refresh: sync.refresh, base: sync.base }));
+      else localStorage.removeItem(SYNC_KEY);
+    } catch (e) {}
+  }
+  function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function isObj(x) { return !!x && typeof x === "object" && !Array.isArray(x); }
+  function hasIds(a) { return Array.isArray(a) && a.length > 0 && a.every(function (x) { return isObj(x) && typeof x.id === "string"; }); }
+  // Three-way merge: what changed on only one side wins; lists of things with ids are merged item by item;
+  // coins spent add up from both sides; a real clash keeps this device's value.
+  function merge3(b, l, r, key) {
+    if (same(l, r)) return l;
+    if (same(b, l)) return r;
+    if (same(b, r)) return l;
+    if (l === undefined) return r;
+    if (r === undefined) return l;
+    if ((key === "spent" || key === "banked") && typeof l === "number" && typeof r === "number")
+      return typeof b === "number" ? Math.max(0, l + r - b) : Math.max(l, r);
+    if (Array.isArray(l) && Array.isArray(r) && (hasIds(l) || hasIds(r))) {
+      var bm = {}, lm = {}, rm = {}, out = [];
+      (Array.isArray(b) ? b : []).forEach(function (x) { if (isObj(x)) bm[x.id] = x; });
+      l.forEach(function (x) { lm[x.id] = x; });
+      r.forEach(function (x) { rm[x.id] = x; });
+      var ids = l.map(function (x) { return x.id; }).concat(r.map(function (x) { return x.id; }).filter(function (id) { return !lm[id]; }));
+      ids.forEach(function (id) { var m = merge3(bm[id], lm[id], rm[id]); if (m !== undefined) out.push(m); });
+      return out;
+    }
+    if (isObj(l) && isObj(r)) {
+      var o = {}, bo = isObj(b) ? b : {};
+      Object.keys(l).concat(Object.keys(r).filter(function (k) { return !(k in l); })).forEach(function (k) {
+        var m = merge3(bo[k], l[k], r[k], k); if (m !== undefined) o[k] = m;
+      });
+      return o;
+    }
+    return l;
+  }
+
+  async function fbAuth(op, body) {
+    var r = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:" + op + "?key=" + FB.key, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error((j.error && j.error.message) || "HTTP " + r.status);
+    return j;
+  }
+  async function fbToken() {
+    if (sync.idToken && Date.now() < sync.exp) return sync.idToken;
+    var r = await fetch("https://securetoken.googleapis.com/v1/token?key=" + FB.key, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(sync.refresh) });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok) {
+      var m = (j.error && j.error.message) || "";
+      if (/TOKEN_EXPIRED|USER_DISABLED|USER_NOT_FOUND|INVALID_REFRESH_TOKEN|INVALID_GRANT_TYPE|MISSING_REFRESH_TOKEN/.test(m)) { syncSignOut("You were logged out of sync. Log in again to keep syncing."); throw new Error("SIGNED_OUT"); }
+      throw new Error(m || "HTTP " + r.status);
+    }
+    sync.idToken = j.id_token; sync.refresh = j.refresh_token || sync.refresh;
+    sync.exp = Date.now() + (Number(j.expires_in) || 3600) * 1000 - 120000;
+    syncKeep();
+    return sync.idToken;
+  }
+  function docUrl() { return "https://firestore.googleapis.com/v1/projects/" + FB.project + "/databases/(default)/documents/users/" + sync.uid + "/data/app"; }
+  async function fbGet() {
+    var r = await fetch(docUrl(), { headers: { Authorization: "Bearer " + (await fbToken()) } });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    var j = await r.json();
+    return { json: (j.fields && j.fields.json && j.fields.json.stringValue) || null, time: j.updateTime };
+  }
+  // Writes only if nobody else wrote since `time` was read; returns false if they did.
+  async function fbPut(json, time) {
+    var q = time ? "currentDocument.updateTime=" + encodeURIComponent(time) : "currentDocument.exists=false";
+    var r = await fetch(docUrl() + "?" + q, {
+      method: "PATCH", headers: { Authorization: "Bearer " + (await fbToken()), "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { json: { stringValue: json }, at: { timestampValue: new Date().toISOString() }, device: { stringValue: DESK ? "pc" : "web" } } })
+    });
+    if (r.ok) return true;
+    if (r.status === 400 || r.status === 409 || r.status === 412) {
+      var t = await r.text();
+      if (/FAILED_PRECONDITION|ALREADY_EXISTS|ABORTED|NOT_FOUND/.test(t)) return false;
+    }
+    throw new Error("HTTP " + r.status);
+  }
+
+  function syncSoon() { if (!sync.uid) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 1200); }
+  function typing() { var a = document.activeElement; return !!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) || (typeof dlg !== "undefined" && dlg.open); }
+  async function syncNow() {
+    if (!sync.uid || mode !== "synced") return;
+    if (sync.busy) { sync.again = true; return; }
+    sync.busy = true; sync.again = false; sync.state = "busy"; showSync();
+    try {
+      for (var tries = 0; tries < 4; tries++) {
+        var remote = await fbGet();
+        var local = JSON.stringify(state);
+        var merged = local;
+        if (remote && remote.json && remote.json !== sync.base) {
+          var r = null; try { r = JSON.parse(remote.json); } catch (e) {}
+          var b = null; try { b = sync.base ? JSON.parse(sync.base) : undefined; } catch (e) {}
+          if (r) merged = JSON.stringify(normalize(merge3(b, JSON.parse(local), r)));
+        }
+        if (merged !== local) {
+          if (JSON.stringify(state) !== local) continue; // changed while we were fetching: start over
+          state = normalize(JSON.parse(merged)); undoSnap = null;
+          var s1 = settleAll();
+          applyColors();
+          if (DESK) pushPrefs();
+          if (!typing()) render();
+          if (s1.msgs.length) toast(s1.msgs.join(" "));
+          merged = JSON.stringify(state);
+          try { await ref.set(JSON.parse(merged)); lastSaved = merged; } catch (e) {}
+        }
+        if (!remote || merged !== remote.json) {
+          if (!(await fbPut(merged, remote && remote.time))) continue; // someone else wrote first: merge again
+        }
+        sync.base = merged; syncKeep();
+        break;
+      }
+      sync.state = "ok"; sync.at = Date.now(); sync.err = "";
+    } catch (e) {
+      if (e && e.message === "SIGNED_OUT") { sync.busy = false; return; }
+      sync.state = navigator.onLine === false ? "offline" : "err"; sync.err = String(e && e.message || e);
+    }
+    sync.busy = false; showSync();
+    if (sync.again) syncSoon();
+  }
+
+  function syncSignOut(msg) {
+    sync.uid = null; sync.email = ""; sync.refresh = ""; sync.base = null; sync.idToken = ""; sync.exp = 0; sync.state = "";
+    syncKeep();
+    syncDraft.msg = msg || "";
+    if (view === "settings") render();
+    if (msg) toast(msg);
+  }
+  async function syncLogin(create) {
+    var email = syncDraft.email.trim(), pw = syncDraft.pw;
+    if (!/^\S+@\S+\.\S+$/.test(email)) { syncDraft.msg = "Enter your email address, like name@example.com."; render(); return; }
+    if (pw.length < 6) { syncDraft.msg = "The password needs at least 6 characters."; render(); return; }
+    syncDraft.busy = true; syncDraft.msg = create ? "Creating your account…" : "Logging in…"; render();
+    try {
+      var j = await fbAuth(create ? "signUp" : "signInWithPassword", { email: email, password: pw, returnSecureToken: true });
+      sync.uid = j.localId; sync.email = j.email || email; sync.refresh = j.refreshToken; sync.idToken = j.idToken;
+      sync.exp = Date.now() + (Number(j.expiresIn) || 3600) * 1000 - 120000; sync.base = null;
+      syncKeep();
+      syncDraft = { email: "", pw: "", msg: "", busy: false };
+      toast(create ? "Account created. Your data is now syncing." : "Logged in. Syncing your data.");
+      render();
+      syncNow();
+    } catch (e) {
+      var m = String(e && e.message || "");
+      syncDraft.busy = false;
+      syncDraft.msg = /EMAIL_EXISTS/.test(m) ? "There's already an account with that email. Use Log in instead."
+        : /INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND/.test(m) ? "That email and password don't match an account. Check them, or create an account."
+        : /WEAK_PASSWORD/.test(m) ? "Pick a longer password (at least 6 characters)."
+        : /INVALID_EMAIL/.test(m) ? "That email address doesn't look right."
+        : /TOO_MANY_ATTEMPTS/.test(m) ? "Too many tries. Wait a few minutes, then try again."
+        : "Couldn't reach the sync service. Check your internet connection and try again.";
+      render();
+    }
+  }
+  async function syncReset() {
+    var email = syncDraft.email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { syncDraft.msg = "Type your email above first, then tap Forgot password."; render(); return; }
+    try { await fbAuth("sendOobCode", { requestType: "PASSWORD_RESET", email: email }); syncDraft.msg = "If that email has an account, a link to set a new password is on its way. Check your inbox."; }
+    catch (e) { syncDraft.msg = "Couldn't send the email. Check the address and your connection, then try again."; }
+    render();
+  }
+
+  function syncText() {
+    if (sync.state === "busy") return "Syncing…";
+    if (sync.state === "offline") return "Offline. Your changes are saved here and sync when you're back online.";
+    if (sync.state === "err") return "Couldn't sync just now. It tries again on its own.";
+    if (sync.state === "ok") {
+      var s = Math.round((Date.now() - sync.at) / 1000);
+      return "Synced · " + (s < 10 ? "just now" : s < 60 ? s + " seconds ago" : Math.round(s / 60) + " min ago");
+    }
+    return "Waiting to sync";
+  }
+  function showSync() { var e = $("syncStat"); if (e) e.textContent = syncText(); }
+
+  function syncCard() {
+    var c = el("section", "card"); c.id = "syncCard";
+    c.appendChild(el("h2", "", "Sync"));
+    if (sync.uid) {
+      c.appendChild(el("p", "muted", "Logged in as " + sync.email + ". Log in with the same email on your other devices and they all stay the same."));
+      var st = el("p", "sync-stat", syncText()); st.id = "syncStat"; st.setAttribute("role", "status"); c.appendChild(st);
+      var r = el("div", "row");
+      var sn = el("button", "btn", "Sync now"); sn.type = "button"; sn.addEventListener("click", function () { syncNow(); });
+      var so = el("button", "btn ghost", "Log out"); so.type = "button";
+      so.addEventListener("click", function () { syncSignOut(); toast("Logged out. Your data stays on this device."); });
+      r.appendChild(sn); r.appendChild(so); c.appendChild(r);
+      return c;
+    }
+    c.appendChild(el("p", "muted", "Keep your PC and phone in step. Create an account once, then log in with it on each device. What's already on this device is kept and added in."));
+    function fld(id, label, type, key, ac) {
+      var f = el("div", "field"), l = el("label", "", label); l.setAttribute("for", id);
+      var i = document.createElement("input"); i.type = type; i.id = id; i.value = syncDraft[key]; i.autocomplete = ac;
+      if (type === "email") { i.inputMode = "email"; i.autocapitalize = "off"; i.spellcheck = false; }
+      i.addEventListener("input", function () { syncDraft[key] = i.value; });
+      i.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); syncLogin(false); } });
+      f.appendChild(l); f.appendChild(i); return f;
+    }
+    c.appendChild(fld("syncEmail", "Email", "email", "email", "username"));
+    c.appendChild(fld("syncPw", "Password (at least 6 characters)", "password", "pw", "current-password"));
+    var r2 = el("div", "row");
+    var li = el("button", "btn", "Log in"); li.type = "button"; li.disabled = syncDraft.busy;
+    li.addEventListener("click", function () { syncLogin(false); });
+    var ca = el("button", "btn ghost", "Create account"); ca.type = "button"; ca.disabled = syncDraft.busy;
+    ca.addEventListener("click", function () { syncLogin(true); });
+    r2.appendChild(li); r2.appendChild(ca); c.appendChild(r2);
+    var fp = el("button", "linkish", "Forgot password?"); fp.type = "button"; fp.addEventListener("click", syncReset);
+    c.appendChild(fp);
+    if (syncDraft.msg) { var m = el("p", "sync-msg", syncDraft.msg); m.setAttribute("role", "status"); c.appendChild(m); }
+    return c;
+  }
+
+  function startSync() {
+    if (!CLOUD) return;
+    try { var k = JSON.parse(localStorage.getItem(SYNC_KEY) || "null"); if (k && k.uid && k.refresh) { sync.uid = k.uid; sync.email = k.email || ""; sync.refresh = k.refresh; sync.base = k.base || null; } } catch (e) {}
+    if (sync.uid) syncNow();
+    setInterval(function () { if (document.visibilityState === "visible") syncNow(); else showSync(); }, 30000);
+    setInterval(showSync, 10000);
+    document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") syncNow(); });
+    window.addEventListener("online", syncNow);
   }
 
 
