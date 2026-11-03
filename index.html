@@ -3122,9 +3122,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     $("wbClose").addEventListener("click", function () { DESK.winClose(); });
   }
 
-  applyColors();
-  render();
   // ---------- translations ----------
+  // Kept above the first applyColors(): a phone set to another language translates the very first screen.
   /*I18N*/
   // Task Tracker translations. build.py copies this file into src/task-tracker.html (between the I18N markers).
   // Each line: "English text": [Italiano, Română, Français, Deutsch, Español].
@@ -3740,6 +3739,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   // Open the app with ?trdebug to list on-screen text that has no translation yet: ttMiss() in the console.
   if (/[?&]trdebug\b/.test(location.search)) { trMiss = {}; window.ttMiss = function () { return Object.keys(trMiss); }; }
 
+  applyColors();
+  render();
   startSynced();
 })();
 </script>
