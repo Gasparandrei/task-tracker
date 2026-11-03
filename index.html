@@ -626,7 +626,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     once:   { label: "One time" }
   };
   var ONCE_COINS = 20, ONCE_EARLY = 10;
-  var DEFAULTS = { name: "", primary: "#0A8580", secondary: "#D9383F", clock24: true, checkFx: true, theme: "auto", mascot: "classic", notify: true, loud: true, evNotify: true, autoFreeze: true, streakAt: "20:00", runOnStart: false, startHidden: true, keepTray: true, borderless: false, glass: false, glassLevel: 35 };
+  var DEFAULTS = { name: "", primary: "#0A8580", secondary: "#D9383F", clock24: true, checkFx: true, theme: "auto", mascot: "classic", notify: true, loud: true, evNotify: true, autoFreeze: true, streakAt: "20:00", runOnStart: false, startHidden: true, keepTray: true, borderless: false, glass: false, glassLevel: 35, lang: "auto" };
   var HOST_THEME = document.documentElement.getAttribute("data-theme");
   var DESK = window.desktopAPI || null; // set by the desktop app; null in a browser
   // The installable app (PWA): neither the desktop app nor the Claude page, so data lives in this browser's storage.
@@ -686,6 +686,75 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var $ = function (id) { return document.getElementById(id); };
   function copy(o) { return JSON.parse(JSON.stringify(o)); }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function own(e) { e.setAttribute("translate", "no"); return e; } // the user's own words: never translated
+
+  // ---------- language ----------
+  // The app is written in English. Whatever lands on screen is looked up in I18N (exact phrases first, then
+  // PATTERNS for phrases with numbers or names inside) by a watcher on the page, so screens need no changes.
+  // Dates and numbers are formatted with LOC.
+  var LANGS = [["en", "English"], ["it", "Italiano"], ["ro", "Română"], ["fr", "Français"], ["de", "Deutsch"], ["es", "Español"]];
+  var LOCALES = { en: "en-GB", it: "it-IT", ro: "ro-RO", fr: "fr-FR", de: "de-DE", es: "es-ES" };
+  var LANG = "en", LOC = "en-GB", trMiss = null;
+  var TR_ATTRS = ["aria-label", "placeholder", "title"];
+  function trText(s) {
+    if (LANG === "en" || !s || !/[A-Za-z]/.test(s)) return s;
+    var D = I18N[LANG] || {}, m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s), core = m[2], out = D[core];
+    if (out === undefined) {
+      for (var i = 0; i < PATTERNS.length; i++) {
+        var p = PATTERNS[i], r = p[0].exec(core);
+        if (!r) continue;
+        var tpl = D[p[1]];
+        if (tpl !== undefined) out = tpl.replace(/\{(\d)\}/g, function (_, g) { var v = r[g] || ""; return (p[2] || "").indexOf(g) >= 0 ? trText(v) : v; });
+        break;
+      }
+    }
+    if (out === undefined) { if (trMiss) trMiss[core] = 1; return s; }
+    return m[1] + out + m[3];
+  }
+  function trSkip(n) { var e = n.nodeType === 1 ? n : n.parentElement; return !e || !!e.closest('[translate="no"],script,style,svg'); }
+  function trTextNode(n, force) {
+    if (!force && n.nodeValue === n.__tr) return;
+    if (trSkip(n)) return;
+    var en = n.__en !== undefined && n.nodeValue === n.__tr ? n.__en : n.nodeValue;
+    var v = trText(en); n.__en = en; n.__tr = v;
+    if (v !== n.nodeValue) n.nodeValue = v;
+  }
+  function trAttr(e, a, force) {
+    var cur = e.getAttribute(a); if (cur === null) return;
+    e.__ena = e.__ena || {}; e.__tra = e.__tra || {};
+    if (!force && cur === e.__tra[a]) return;
+    if (trSkip(e)) return;
+    var en = e.__ena[a] !== undefined && cur === e.__tra[a] ? e.__ena[a] : cur;
+    var v = trText(en); e.__ena[a] = en; e.__tra[a] = v;
+    if (v !== cur) e.setAttribute(a, v);
+  }
+  function trTree(root, force) {
+    if (!root) return;
+    if (root.nodeType === 3) { trTextNode(root, force); return; }
+    if (root.nodeType !== 1) return;
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), n;
+    while ((n = w.nextNode())) trTextNode(n, force);
+    [root].concat([].slice.call(root.querySelectorAll("[aria-label],[placeholder],[title]"))).forEach(function (e) {
+      TR_ATTRS.forEach(function (a) { if (e.hasAttribute && e.hasAttribute(a)) trAttr(e, a, force); });
+    });
+  }
+  new MutationObserver(function (list) {
+    if (LANG === "en") return;
+    list.forEach(function (m) {
+      if (m.type === "characterData") trTextNode(m.target);
+      else if (m.type === "attributes") trAttr(m.target, m.attributeName);
+      else m.addedNodes.forEach(function (n) { trTree(n); });
+    });
+  }).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: TR_ATTRS });
+  function applyLang() {
+    var want = state.settings.lang, dev = String(navigator.language || "en").slice(0, 2).toLowerCase();
+    var L = LOCALES[want] ? want : (LOCALES[dev] ? dev : "en");
+    if (L === LANG) return;
+    LANG = L; LOC = LOCALES[L];
+    document.documentElement.lang = L;
+    DAYS = [0, 1, 2, 3, 4, 5, 6].map(function (i) { var s = new Date(2026, 0, 5 + i).toLocaleDateString(LOC, { weekday: "short" }).replace(/\.$/, ""); return s.charAt(0).toUpperCase() + s.slice(1); });
+    trTree(document.body, true);
+  }
 
   // ---------- dates ----------
   function ymd(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
@@ -693,7 +762,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   function shift(k, n) { var d = parseKey(k); d.setDate(d.getDate() + n); return ymd(d); }
   function weekStart(d) { var x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return ymd(x); }
   function today() { return ymd(new Date()); }
-  function niceDay(k) { return parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
+  function niceDay(k) { return parseKey(k).toLocaleDateString(LOC, { weekday: "short", day: "numeric", month: "short" }); }
 
   // ---------- colours ----------
   function validHex(h, fb) { return typeof h === "string" && /^#[0-9a-f]{6}$/i.test(h) ? h : fb; }
@@ -703,6 +772,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   }
   function onColor(hex) { var L = lum(hex); return 1.05 / (L + .05) >= (L + .05) / .0645 ?"#FFFFFF" : "#14211D"; }
   function applyColors() {
+    applyLang();
     var s = state.settings, root = document.documentElement.style;
     var p = validHex(s.primary, DEFAULTS.primary), q = validHex(s.secondary, DEFAULTS.secondary);
     root.setProperty("--primary", p); root.setProperty("--on-primary", onColor(p));
@@ -755,6 +825,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     s.borderless = s.borderless === true;
     s.glass = s.glass === true;
     s.glassLevel = Math.min(80, Math.max(10, Math.round(Number(s.glassLevel)) || 35));
+    s.lang = Object.prototype.hasOwnProperty.call(LOCALES, s.lang) ? s.lang : "auto";
     s.streakAt = typeof s.streakAt === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.streakAt) ? s.streakAt : "20:00";
     s.mascot = typeof s.mascot === "string" && Object.prototype.hasOwnProperty.call(MASCOTS, s.mascot) ? s.mascot : "classic";
     var pool = { daily: n0(d && d.freezes && d.freezes.daily), weekly: n0(d && d.freezes && d.freezes.weekly) };
@@ -1054,8 +1125,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var now = new Date(), s = state.settings;
     var nm = s.name || profileName;
     $("hello").textContent = nm ? "Hi, " + nm : "Hi there";
-    $("clock").textContent = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: !s.clock24 });
-    $("dateLine").textContent = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    $("clock").textContent = now.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit", hour12: !s.clock24 });
+    $("dateLine").textContent = now.toLocaleDateString(LOC, { weekday: "long", day: "numeric", month: "long" });
   }
 
   // ---------- views ----------
@@ -1159,15 +1230,15 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     tick.addEventListener("click", function () { if (quota && a.done) return; tap(t); });
 
     var body = el("div", "t-body");
-    var title = el("button", "t-title", t.title);
+    var title = own(el("button", "t-title", t.title));
     title.type = "button";
     title.setAttribute("aria-label", "Edit task: " + t.title);
     title.addEventListener("click", function () { openSheet(t); });
     body.appendChild(title);
-    if (t.desc) body.appendChild(el("div", "t-desc", t.desc));
+    if (t.desc) body.appendChild(own(el("div", "t-desc", t.desc)));
     var tags = el("div", "tags");
     tags.appendChild(el("span", "tag tag-type", RULES[t.type].label));
-    if (t.cat) tags.appendChild(el("span", "tag cat", t.cat));
+    if (t.cat) tags.appendChild(own(el("span", "tag cat", t.cat)));
     if (due) {
       var d = el("span", "tag due" + (due.level === "red" ? " late" : ""));
       if (!a.done) d.insertAdjacentHTML("beforeend", FLAME);
@@ -1506,7 +1577,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       SUGGEST.forEach(function (s) {
         var b = el("button", "chip", s.title + " · " + RULES[s.type].label + (s.target > 1 ? " x" + s.target : ""));
         b.type = "button";
-        b.addEventListener("click", function () { state.tasks.push({ id: newId(), title: s.title, type: s.type, target: s.target, cat: s.cat, due: null, created: today(), log: {} }); changed(); });
+        b.addEventListener("click", function () { state.tasks.push({ id: newId(), title: trText(s.title), type: s.type, target: s.target, cat: trText(s.cat), due: null, created: today(), log: {} }); changed(); });
         chips.appendChild(b);
       });
       e.appendChild(chips);
@@ -1627,14 +1698,14 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         li.appendChild(ub);
       } else if (s.price && pendingBuy === id) {
         // Pricier mascots ask once more before the coins go.
-        li.appendChild(el("span", "sm-req", "Spend " + s.price.toLocaleString("en-GB") + " coins?"));
+        li.appendChild(el("span", "sm-req", "Spend " + s.price.toLocaleString(LOC) + " coins?"));
         var yb = el("button", "btn small", "Yes, buy"); yb.type = "button"; yb.setAttribute("data-mascot", id);
         yb.addEventListener("click", function () { pendingBuy = null; buyMascot(id); });
         var nb2 = el("button", "btn ghost small", "Cancel"); nb2.type = "button";
         nb2.addEventListener("click", function () { pendingBuy = null; focusSel = '[data-mascot="' + id + '"]'; render(); });
         li.appendChild(yb); li.appendChild(nb2);
       } else if (s.price) {
-        var bb = el("button", "btn small", "Buy for " + s.price.toLocaleString("en-GB")); bb.type = "button";
+        var bb = el("button", "btn small", "Buy for " + s.price.toLocaleString(LOC)); bb.type = "button";
         bb.setAttribute("data-mascot", id); bb.disabled = bal < s.price;
         bb.setAttribute("aria-label", "Buy " + o[1] + " for " + s.price + " coins");
         bb.addEventListener("click", function () {
@@ -1642,7 +1713,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
           else buyMascot(id);
         });
         li.appendChild(bb);
-        if (bal < s.price) li.appendChild(el("span", "muted num", "need " + (s.price - bal).toLocaleString("en-GB") + " more"));
+        if (bal < s.price) li.appendChild(el("span", "muted num", "need " + (s.price - bal).toLocaleString(LOC) + " more"));
       } else {
         li.appendChild(el("span", "sm-req", "Reach a " + s.streak + "-streak"));
         var pb = el("div", "bar"); var pi = document.createElement("i"); pi.style.width = Math.min(100, top.n / s.streak * 100) + "%"; pb.appendChild(pi); li.appendChild(pb);
@@ -1665,12 +1736,12 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     next.disabled = atNow;
     next.addEventListener("click", function () { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); render(); });
     head.appendChild(prev);
-    head.appendChild(el("h2", "", calMonth.toLocaleDateString("en-GB", { month: "long", year: "numeric" })));
+    head.appendChild(el("h2", "", calMonth.toLocaleDateString(LOC, { month: "long", year: "numeric" })));
     head.appendChild(next);
     cal.appendChild(head);
 
     var grid = el("div", "cal");
-    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(function (d) { grid.appendChild(el("div", "dow", d)); });
+    DAYS.forEach(function (d) { grid.appendChild(el("div", "dow", d)); });
     var y = calMonth.getFullYear(), m = calMonth.getMonth();
     var offset = (new Date(y, m, 1).getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate(), tk = today();
     for (var o = 0; o < offset; o++) grid.appendChild(el("div"));
@@ -1692,7 +1763,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var items = map[selDay] || [];
     if (!items.length) { var li0 = el("li"); li0.appendChild(el("span", "muted", "Nothing logged this day.")); list.appendChild(li0); }
     items.forEach(function (e) {
-      var li = el("li"); li.appendChild(el("span", "", e.t.title));
+      var li = el("li"); li.appendChild(own(el("span", "", e.t.title)));
       li.appendChild(el("span", "muted num", e.c > 1 ? "x" + e.c : "Done"));
       var dn = e.t.notes && e.t.notes[selDay];
       if (dn) li.appendChild(el("span", "dl-note", noteText(e.t, dn)));
@@ -1708,7 +1779,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       var ul = el("ul", "st-list");
       sl.forEach(function (t) {
         var a = analyze(t), li = el("li");
-        li.appendChild(el("span", "", t.title));
+        li.appendChild(own(el("span", "", t.title)));
         var r = el("span", "muted num"); r.appendChild(document.createTextNode("Now "));
         var b1 = el("b", "", String(a.streak)); r.appendChild(b1);
         r.appendChild(document.createTextNode(" · Best ")); r.appendChild(el("b", "", String(a.best)));
@@ -1918,6 +1989,18 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       trow.appendChild(tb);
     });
     tf.appendChild(trow); card.appendChild(tf);
+
+    var lf = el("div", "field");
+    lf.appendChild(el("div", "flabel", "Language"));
+    var lrow = el("div", "filters"); lrow.setAttribute("role", "group"); lrow.setAttribute("aria-label", "Language");
+    [["auto", "Auto (match device)"]].concat(LANGS).forEach(function (o) {
+      var lb = el("button", "chip", o[1]); lb.type = "button";
+      if (o[0] !== "auto") { own(lb); lb.lang = o[0]; }
+      lb.setAttribute("aria-pressed", String(state.settings.lang === o[0]));
+      lb.addEventListener("click", function () { state.settings.lang = o[0]; focusSel = null; changed(); });
+      lrow.appendChild(lb);
+    });
+    lf.appendChild(lrow); card.appendChild(lf);
 
     var mf = el("div", "field");
     mf.appendChild(el("div", "flabel", "Mascot"));
@@ -2133,7 +2216,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var tm = el("div", "ev-time num");
     tm.appendChild(el("b", "", e.start)); tm.appendChild(el("span", "", e.end));
     var body = el("div", "t-body");
-    var title = el("button", "t-title", e.title); title.type = "button";
+    var title = own(el("button", "t-title", e.title)); title.type = "button";
     title.setAttribute("aria-label", "Edit event: " + e.title);
     title.addEventListener("click", function () { openEv(e, schedDay); });
     body.appendChild(title);
@@ -2141,8 +2224,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     if (isNow) tags.appendChild(el("span", "tag now", "Now"));
     if (x.skipped) tags.appendChild(el("span", "tag", x.brk ? "On break" + (x.brk.label ? ": " + x.brk.label : "") : "Skipped today"));
     if (overlaps(list, x)) tags.appendChild(el("span", "tag warn", "Overlaps"));
-    if (e.place) tags.appendChild(el("span", "tag", e.place));
-    if (e.cat) tags.appendChild(el("span", "tag cat", e.cat));
+    if (e.place) tags.appendChild(own(el("span", "tag", e.place)));
+    if (e.cat) tags.appendChild(own(el("span", "tag cat", e.cat)));
     tags.appendChild(el("span", "tag", e.kind === "once" ? "One time" : daysLabel(e.days) + (e.weeks ? " · week " + weekNo(e, schedDay) + " of " + e.weeks : "")));
     body.appendChild(tags);
     li.appendChild(tm); li.appendChild(body);
@@ -2182,7 +2265,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     nextB.addEventListener("click", function () { schedDay = shift(schedDay, 7); render(); });
     var fmt = { day: "numeric", month: "short" };
     head.appendChild(prev);
-    head.appendChild(el("h2", "num", parseKey(ws).toLocaleDateString("en-GB", fmt) + " – " + parseKey(shift(ws, 6)).toLocaleDateString("en-GB", fmt)));
+    head.appendChild(el("h2", "num", parseKey(ws).toLocaleDateString(LOC, fmt) + " – " + parseKey(shift(ws, 6)).toLocaleDateString(LOC, fmt)));
     head.appendChild(nextB);
     v.appendChild(head);
 
@@ -2220,7 +2303,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       var chips = el("div", "chips");
       EV_SUGGEST.forEach(function (s) {
         var b = el("button", "chip", s.title + " · " + daysLabel(s.days) + " " + s.start); b.type = "button";
-        b.addEventListener("click", function () { state.events.push({ id: newId(), title: s.title, kind: "weekly", days: s.days.slice(), date: null, start: s.start, end: s.end, place: "", cat: s.cat, remind: 10, created: today(), begins: today(), weeks: null, skips: {} }); toast("Added to your schedule"); changed(); });
+        b.addEventListener("click", function () { state.events.push({ id: newId(), title: trText(s.title), kind: "weekly", days: s.days.slice(), date: null, start: s.start, end: s.end, place: "", cat: trText(s.cat), remind: 10, created: today(), begins: today(), weeks: null, skips: {} }); toast("Added to your schedule"); changed(); });
         chips.appendChild(b);
       });
       em.appendChild(chips); sec.appendChild(em);
@@ -2239,7 +2322,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     if (due.length) {
       var dc = el("section", "card"); dc.appendChild(el("h2", "", "Tasks due"));
       var dl = el("ul", "st-list");
-      due.forEach(function (t) { var li = el("li"); li.appendChild(el("span", "", t.title)); li.appendChild(el("span", "muted num", t.dueTime || "Any time")); dl.appendChild(li); });
+      due.forEach(function (t) { var li = el("li"); li.appendChild(own(el("span", "", t.title))); li.appendChild(el("span", "muted num", t.dueTime || "Any time")); dl.appendChild(li); });
       dc.appendChild(dl); v.appendChild(dc);
     }
 
@@ -2328,7 +2411,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       li.appendChild(el("span", "", noteText(t, t.notes[k]))); nl.appendChild(li);
     });
     $("notesWrap").hidden = !nk.length;
-    var cats = CAT_HINTS.slice();
+    var cats = CAT_HINTS.map(trText);
     state.tasks.forEach(function (x) { if (x.cat && cats.indexOf(x.cat) < 0) cats.unshift(x.cat); });
     $("catList").innerHTML = "";
     cats.forEach(function (c) { var o = document.createElement("option"); o.value = c; $("catList").appendChild(o); });
@@ -2429,7 +2512,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     $("ePlace").value = e ? e.place : "";
     $("eCat").value = e ? e.cat : "";
     $("eRemind").value = e ? (e.remind === null ? "" : String(e.remind)) : "10";
-    var cats = CAT_HINTS.slice();
+    var cats = CAT_HINTS.map(trText);
     state.tasks.forEach(function (x) { if (x.cat && cats.indexOf(x.cat) < 0) cats.unshift(x.cat); });
     $("catList").innerHTML = "";
     cats.forEach(function (c) { var o = document.createElement("option"); o.value = c; $("catList").appendChild(o); });
@@ -2615,7 +2698,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   }
   var alertBox = null, alertTexts = [];
   function loudAlert(texts) {
-    if (DESK) { try { DESK.alert({ texts: texts, primary: state.settings.primary, secondary: state.settings.secondary }); return; } catch (e) {} }
+    if (DESK) { try { DESK.alert({ texts: texts.map(trText), primary: state.settings.primary, secondary: state.settings.secondary }); return; } catch (e) {} }
     beep();
     if (!alertBox) { alertBox = document.createElement("dialog"); alertBox.className = "alertbox"; alertBox.setAttribute("aria-labelledby", "abTitle"); document.body.appendChild(alertBox); }
     alertTexts = alertBox.open ? alertTexts.concat(texts) : texts.slice();
@@ -2631,6 +2714,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   // System notification. Android only allows them through the service worker, so use it when there is one.
   function sysNotify(text) {
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    text = trText(text);
     var opts = { body: text, requireInteraction: !!state.settings.loud, icon: "icons/icon-192.png", badge: "icons/badge-96.png", tag: "tt-" + text.length + "-" + text.slice(0, 24) };
     try {
       if (WEB && navigator.serviceWorker && navigator.serviceWorker.controller) {
@@ -3040,6 +3124,622 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
 
   applyColors();
   render();
+  // ---------- translations ----------
+  /*I18N*/
+  // Task Tracker translations. build.py copies this file into src/task-tracker.html (between the I18N markers).
+  // Each line: "English text": [Italiano, Română, Français, Deutsch, Español].
+  // Phrases with numbers or names in them are matched by PATTERNS and use {1}, {2}… for the parts that change.
+  // To find text that is still untranslated, open the app with ?trdebug and run ttMiss() in the console.
+  var PATTERNS = [
+    // tasks
+    [/^Hi, (.+)$/, "Hi, {1}"],
+    [/^(\d+) of (\d+) done$/, "{1} of {2} done"],
+    [/^Overdue by (\d+) days$/, "Overdue by {1} days"],
+    [/^Overdue since (\d\d:\d\d)$/, "Overdue since {1}"],
+    [/^Due today at (\d\d:\d\d)$/, "Due today at {1}"],
+    [/^Due tomorrow at (\d\d:\d\d)$/, "Due tomorrow at {1}"],
+    [/^Due in 2 days at (\d\d:\d\d)$/, "Due in 2 days at {1}"],
+    [/^Due (.+) at (\d\d:\d\d)$/, "Due {1} at {2}"],
+    [/^Due (.+)$/, "Due {1}"],
+    [/^Done: (.+)\. Use the minus button to undo\.$/, "Done: {1}. Use the minus button to undo."],
+    [/^Done: (.+)$/, "Done: {1}"],
+    [/^Done (.+)$/, "Done {1}"],
+    [/^Checked in (\d+) of (\d+)$/, "Checked in {1} of {2}"],
+    [/^\+(\d+) coins, (\d+)-day streak bonus$/, "+{1} coins, {2}-day streak bonus"],
+    [/^\+(\d+) coins, (\d+)-week streak bonus$/, "+{1} coins, {2}-week streak bonus"],
+    [/^\+(\d+) coins$/, "+{1} coins"],
+    [/^Unchecked “(.+)”$/, "Unchecked “{1}”"],
+    [/^Deleted “(.+)”\. Your coins stay\.$/, "Deleted “{1}”. Your coins stay."],
+    [/^Removed the category “(.+)”\. Your tasks stay\.$/, "Removed the category “{1}”. Your tasks stay."],
+    [/^Remove the category (.+) from all tasks and events$/, "Remove the category {1} from all tasks and events"],
+    [/^Today's note for (.+)$/, "Today's note for {1}"],
+    [/^Check-in (\d+) \((.+)\)$/, "Check-in {1} ({2})"],
+    [/^Amount \((.+)\)$/, "Amount ({1})"],
+    [/^Add one: (.+), (\d+) of (\d+)$/, "Add one: {1}, {2} of {3}"],
+    [/^Undo: (.+)$/, "Undo: {1}"],
+    [/^Mark done: (.+)$/, "Mark done: {1}"],
+    [/^Edit task: (.+)$/, "Edit task: {1}"],
+    [/^Remove one check-in: (.+)$/, "Remove one check-in: {1}"],
+    [/^Auto freeze for (.+)$/, "Auto freeze for {1}"],
+    [/^Auto freeze on for “(.+)”$/, "Auto freeze on for “{1}”"],
+    [/^Auto freeze off for “(.+)”$/, "Auto freeze off for “{1}”"],
+    [/^Delete task: (.+)$/, "Delete task: {1}"],
+    [/^Edit today's note: (.+)$/, "Edit today's note: {1}"],
+    [/^Add a note for today: (.+)$/, "Add a note for today: {1}"],
+    [/^Delete “(.+)” and its streak\?$/, "Delete “{1}” and its streak?", "1"],
+    [/^(.+) this week$/, "{1} this week"],
+    [/^(\d+) freezes$/, "{1} freezes"],
+    [/^(.+) · (Daily|Weekly) x(\d+)$/, "{1} · {2} x{3}", "12"],
+    // heads up
+    [/^“(.+)” is overdue\.$/, "“{1}” is overdue."],
+    [/^“(.+)” is due in (\d+) min\.$/, "“{1}” is due in {2} min."],
+    [/^“(.+)” is due at (\d\d:\d\d)\.$/, "“{1}” is due at {2}."],
+    [/^“(.+)” is due today\.$/, "“{1}” is due today."],
+    [/^“(.+)” starts now at (.+)\.$/, "“{1}” starts now at {2}."],
+    [/^“(.+)” starts now\.$/, "“{1}” starts now."],
+    [/^“(.+)” starts in (.+?) at (.+)\.$/, "“{1}” starts in {2} at {3}."],
+    [/^“(.+)” starts in (.+)\.$/, "“{1}” starts in {2}."],
+    [/^Your (\d+)-day streak on “(.+)” is still open today\. A quick check-in keeps it going\.( You have a freeze in stock if you need it\.)?$/, "Your {1}-day streak on “{2}” is still open today. A quick check-in keeps it going.{3}", "3"],
+    [/^Your (\d+)-week streak on “(.+)” ends Sunday night\.( \d+ more to go\.)?( You have a freeze in stock if you need it\.)?$/, "Your {1}-week streak on “{2}” ends Sunday night.{3}{4}", "34"],
+    [/^(\d+) more to go\.$/, "{1} more to go."],
+    [/^(\d+) things need a look\. Check the Heads up card\.$/, "{1} things need a look. Check the Heads up card."],
+    // progress and mascots
+    [/^days, on “(.+)”$/, "days, on “{1}”"],
+    [/^weeks, on “(.+)”$/, "weeks, on “{1}”"],
+    [/^to spend · (\d+) earned in total$/, "to spend · {1} earned in total"],
+    [/^1 freeze in stock · need (\d+) more coins$/, "1 freeze in stock · need {1} more coins"],
+    [/^(\d+) freezes in stock · need (\d+) more coins$/, "{1} freezes in stock · need {2} more coins"],
+    [/^(\d+) freezes in stock$/, "{1} freezes in stock"],
+    [/^Buy for (.+)$/, "Buy for {1}"],
+    [/^need (.+) more$/, "need {1} more"],
+    [/^Buy a daily streak freeze for (\d+) coins$/, "Buy a daily streak freeze for {1} coins"],
+    [/^Buy a weekly streak freeze for (\d+) coins$/, "Buy a weekly streak freeze for {1} coins"],
+    [/^Buy (.+) for (\d+) coins$/, "Buy {1} for {2} coins", "1"],
+    [/^Spend (.+) coins\?$/, "Spend {1} coins?"],
+    [/^Reach a (\d+)-streak$/, "Reach a {1}-streak"],
+    [/^best so far: (\d+)$/, "best so far: {1}"],
+    [/^Bought a daily freeze \((\d+) coins\) and used it on “(.+)”\.$/, "Bought a daily freeze ({1} coins) and used it on “{2}”."],
+    [/^Bought a weekly freeze \((\d+) coins\) and used it on “(.+)”\.$/, "Bought a weekly freeze ({1} coins) and used it on “{2}”."],
+    [/^Streak freeze used on “(.+)”\.$/, "Streak freeze used on “{1}”."],
+    [/^New mascot unlocked: (.+), for a (\d+)-streak! Pick it in Settings\.$/, "New mascot unlocked: {1}, for a {2}-streak! Pick it in Settings.", "1"],
+    [/^(.+) is yours and is now your mascot\.$/, "{1} is yours and is now your mascot.", "1"],
+    [/^(.+) is now your mascot$/, "{1} is now your mascot", "1"],
+    [/^(.+), 1 task done$/, "{1}, 1 task done"],
+    [/^(.+), (\d+) tasks done$/, "{1}, {2} tasks done"],
+    // settings
+    [/^(\d+) more to unlock in Progress$/, "{1} more to unlock in Progress"],
+    [/^(.+), custom colour$/, "{1}, custom colour", "1"],
+    [/^How see-through: (\d+)%$/, "How see-through: {1}%"],
+    [/^Backup saved as (.+)$/, "Backup saved as {1}"],
+    [/^Load this backup\? It has (\d+) (tasks?) and (\d+) (events?), and it replaces what is here now\.$/, "Load this backup? It has {1} {2} and {3} {4}, and it replaces what is here now.", "24"],
+    [/^On vacation until (.+)\. Streaks are safe and reminders are paused\.$/, "On vacation until {1}. Streaks are safe and reminders are paused."],
+    [/^Remove vacation (.+)$/, "Remove vacation {1}"],
+    [/^Delete all (\d+) tasks, their streaks and your coins\? Your schedule and mascots stay\.$/, "Delete all {1} tasks, their streaks and your coins? Your schedule and mascots stay."],
+    [/^Logged in as (.+)\. Log in with the same email on your other devices and they all stay the same\.$/, "Logged in as {1}. Log in with the same email on your other devices and they all stay the same."],
+    [/^Synced · (\d+) seconds ago$/, "Synced · {1} seconds ago"],
+    [/^Synced · (\d+) min ago$/, "Synced · {1} min ago"],
+    // schedule
+    [/^(.+) · week (\d+) of (\d+)$/, "{1} · week {2} of {3}", "1"],
+    [/^On break: (.+)$/, "On break: {1}"],
+    [/^Now: (.+), until (\d\d:\d\d)\. Next: (.+) at (\d\d:\d\d)\.$/, "Now: {1}, until {2}. Next: {3} at {4}."],
+    [/^Now: (.+), until (\d\d:\d\d)\.$/, "Now: {1}, until {2}."],
+    [/^Next: (.+) at (\d\d:\d\d), in (.+)\.$/, "Next: {1} at {2}, in {3}."],
+    [/^(.+), 1 event$/, "{1}, 1 event"],
+    [/^(.+), (\d+) events$/, "{1}, {2} events"],
+    [/^(\d+) events$/, "{1} events"],
+    [/^(.+) · All repeating events$/, "{1} · All repeating events"],
+    [/^(.+) · 1 event$/, "{1} · 1 event"],
+    [/^(.+) · (\d+) events$/, "{1} · {2} events"],
+    [/^Edit event: (.+)$/, "Edit event: {1}"],
+    [/^Edit break: (.+)$/, "Edit break: {1}", "1"],
+    [/^Runs for 1 week, until (.+)\.$/, "Runs for 1 week, until {1}."],
+    [/^Runs for (\d+) weeks, until (.+)\.$/, "Runs for {1} weeks, until {2}."],
+    [/^Skip (.+) only$/, "Skip {1} only"],
+    [/^Bring back (.+)$/, "Bring back {1}"],
+    [/^Delete “(.+)” from every day\?$/, "Delete “{1}” from every day?", "1"],
+    [/^Delete “(.+)”\? Its events will run again\.$/, "Delete “{1}”? Its events will run again.", "1"],
+    [/^(.+) is back on$/, "{1} is back on"],
+    [/^(.+) skipped$/, "{1} skipped"],
+    [/^(.+) · (.+) (\d\d:\d\d)$/, "{1} · {2} {3}", "12"],
+    [/^(.+) · (Daily|Weekly)$/, "{1} · {2}", "12"]
+  ];
+
+  var I18N = (function () {
+    var T = {
+      // ---- navigation and header ----
+      "Hi there": ["Ciao!", "Salut!", "Salut !", "Hallo!", "¡Hola!"],
+      "Hi, {1}": ["Ciao, {1}", "Salut, {1}", "Salut, {1}", "Hallo, {1}", "Hola, {1}"],
+      "Tasks": ["Attività", "Sarcini", "Tâches", "Aufgaben", "Tareas"],
+      "Schedule": ["Agenda", "Program", "Agenda", "Kalender", "Agenda"],
+      "Progress": ["Progressi", "Progres", "Progrès", "Fortschritt", "Progreso"],
+      "Settings": ["Impostazioni", "Setări", "Réglages", "Einstellungen", "Ajustes"],
+      "Main": ["Principale", "Principal", "Principal", "Hauptmenü", "Principal"],
+      "Minimize": ["Riduci a icona", "Minimizează", "Réduire", "Minimieren", "Minimizar"],
+      "Maximize or restore": ["Ingrandisci o ripristina", "Maximizează sau restabilește", "Agrandir ou restaurer", "Maximieren oder wiederherstellen", "Maximizar o restaurar"],
+      "Close": ["Chiudi", "Închide", "Fermer", "Schließen", "Cerrar"],
+      "Loading your tasks": ["Caricamento delle attività", "Se încarcă sarcinile", "Chargement de vos tâches", "Aufgaben werden geladen", "Cargando tus tareas"],
+      "Loading your schedule": ["Caricamento dell'agenda", "Se încarcă programul", "Chargement de votre agenda", "Kalender wird geladen", "Cargando tu agenda"],
+
+      // ---- task sheet ----
+      "New task": ["Nuova attività", "Sarcină nouă", "Nouvelle tâche", "Neue Aufgabe", "Nueva tarea"],
+      "Edit task": ["Modifica attività", "Editează sarcina", "Modifier la tâche", "Aufgabe bearbeiten", "Editar tarea"],
+      "Task name": ["Nome dell'attività", "Numele sarcinii", "Nom de la tâche", "Name der Aufgabe", "Nombre de la tarea"],
+      "Repeats": ["Ripetizione", "Se repetă", "Répétition", "Wiederholung", "Se repite"],
+      "Daily": ["Giornaliera", "Zilnic", "Quotidienne", "Täglich", "Diaria"],
+      "Weekly": ["Settimanale", "Săptămânal", "Hebdomadaire", "Wöchentlich", "Semanal"],
+      "One time": ["Una volta", "O singură dată", "Une fois", "Einmalig", "Una vez"],
+      "Times per day": ["Volte al giorno", "De câte ori pe zi", "Fois par jour", "Mal pro Tag", "Veces al día"],
+      "Times per week": ["Volte a settimana", "De câte ori pe săptămână", "Fois par semaine", "Mal pro Woche", "Veces por semana"],
+      "Due date": ["Scadenza", "Termen", "Échéance", "Fällig am", "Fecha límite"],
+      "Due time (optional)": ["Ora di scadenza (facoltativa)", "Ora limită (opțional)", "Heure limite (facultative)", "Uhrzeit (optional)", "Hora límite (opcional)"],
+      "Track an amount (optional)": ["Registra una quantità (facoltativo)", "Urmărește o cantitate (opțional)", "Suivre une quantité (facultatif)", "Menge erfassen (optional)", "Registrar una cantidad (opcional)"],
+      "Name a unit to log how much with each check-in.": ["Indica un'unità per registrare quanto fai a ogni check-in.", "Alege o unitate ca să notezi cât faci la fiecare bifare.", "Indiquez une unité pour noter combien à chaque validation.", "Gib eine Einheit an, um bei jedem Abhaken die Menge einzutragen.", "Indica una unidad para anotar cuánto en cada registro."],
+      "min, g protein, pages": ["min, g proteine, pagine", "min, g proteine, pagini", "min, g protéines, pages", "Min., g Protein, Seiten", "min, g proteína, páginas"],
+      "Daily goal (optional)": ["Obiettivo giornaliero (facoltativo)", "Obiectiv zilnic (opțional)", "Objectif quotidien (facultatif)", "Tagesziel (optional)", "Objetivo diario (opcional)"],
+      "Weekly goal (optional)": ["Obiettivo settimanale (facoltativo)", "Obiectiv săptămânal (opțional)", "Objectif hebdomadaire (facultatif)", "Wochenziel (optional)", "Objetivo semanal (opcional)"],
+      "Category (optional)": ["Categoria (facoltativa)", "Categorie (opțional)", "Catégorie (facultative)", "Kategorie (optional)", "Categoría (opcional)"],
+      "Description (optional)": ["Descrizione (facoltativa)", "Descriere (opțional)", "Description (facultative)", "Beschreibung (optional)", "Descripción (opcional)"],
+      "Recent check-in notes": ["Note recenti", "Note recente", "Notes récentes", "Letzte Notizen", "Notas recientes"],
+      "Add task": ["Aggiungi attività", "Adaugă sarcina", "Ajouter la tâche", "Aufgabe hinzufügen", "Añadir tarea"],
+      "Save changes": ["Salva modifiche", "Salvează modificările", "Enregistrer", "Änderungen speichern", "Guardar cambios"],
+      "Cancel": ["Annulla", "Anulează", "Annuler", "Abbrechen", "Cancelar"],
+      "Delete task": ["Elimina attività", "Șterge sarcina", "Supprimer la tâche", "Aufgabe löschen", "Eliminar tarea"],
+      "Yes, delete": ["Sì, elimina", "Da, șterge", "Oui, supprimer", "Ja, löschen", "Sí, eliminar"],
+      "Keep it": ["Tienila", "Păstrează", "La garder", "Behalten", "Conservar"],
+      "Give the task a name so you can find it later.": ["Dai un nome all'attività per ritrovarla in seguito.", "Dă un nume sarcinii ca s-o găsești mai târziu.", "Donnez un nom à la tâche pour la retrouver plus tard.", "Gib der Aufgabe einen Namen, damit du sie später findest.", "Ponle un nombre a la tarea para encontrarla después."],
+      "Changes saved": ["Modifiche salvate", "Modificări salvate", "Modifications enregistrées", "Änderungen gespeichert", "Cambios guardados"],
+      "Task added": ["Attività aggiunta", "Sarcină adăugată", "Tâche ajoutée", "Aufgabe hinzugefügt", "Tarea añadida"],
+      "Delete this task and its streak?": ["Eliminare questa attività e la sua serie?", "Ștergi sarcina și seria ei?", "Supprimer cette tâche et sa série ?", "Diese Aufgabe und ihre Serie löschen?", "¿Eliminar esta tarea y su racha?"],
+      "Delete “{1}” and its streak?": ["Eliminare “{1}” e la sua serie?", "Ștergi „{1}” și seria ei?", "Supprimer « {1} » et sa série ?", "„{1}“ und die Serie löschen?", "¿Eliminar “{1}” y su racha?"],
+      "this task": ["questa attività", "această sarcină", "cette tâche", "diese Aufgabe", "esta tarea"],
+
+      // ---- task list ----
+      "Heads up": ["Attenzione", "Atenție", "À noter", "Hinweis", "Atención"],
+      "All": ["Tutte", "Toate", "Toutes", "Alle", "Todas"],
+      "Filter by category": ["Filtra per categoria", "Filtrează după categorie", "Filtrer par catégorie", "Nach Kategorie filtern", "Filtrar por categoría"],
+      "× Remove category": ["× Rimuovi categoria", "× Elimină categoria", "× Retirer la catégorie", "× Kategorie entfernen", "× Quitar categoría"],
+      "Remove the category {1} from all tasks and events": ["Rimuovi la categoria {1} da tutte le attività e gli eventi", "Elimină categoria {1} de la toate sarcinile și evenimentele", "Retirer la catégorie {1} de toutes les tâches et événements", "Kategorie {1} von allen Aufgaben und Terminen entfernen", "Quitar la categoría {1} de todas las tareas y eventos"],
+      "Removed the category “{1}”. Your tasks stay.": ["Categoria “{1}” rimossa. Le attività restano.", "Categoria „{1}” a fost eliminată. Sarcinile rămân.", "Catégorie « {1} » retirée. Vos tâches restent.", "Kategorie „{1}“ entfernt. Deine Aufgaben bleiben.", "Categoría “{1}” quitada. Tus tareas se quedan."],
+      "Add new task / habit / quota": ["Nuova attività / abitudine / quota", "Sarcină / obicei / cotă nouă", "Nouvelle tâche / habitude / quota", "Neue Aufgabe / Gewohnheit / Quote", "Nueva tarea / hábito / cuota"],
+      "No tasks yet. Add your own below, or start with one of these.": ["Ancora nessuna attività. Aggiungine una qui sotto o inizia con una di queste.", "Încă nu ai sarcini. Adaugă una mai jos sau începe cu una dintre acestea.", "Aucune tâche pour l'instant. Ajoutez la vôtre ci-dessous ou commencez par l'une de celles-ci.", "Noch keine Aufgaben. Füge unten eine hinzu oder starte mit einer davon.", "Aún no hay tareas. Añade la tuya abajo o empieza con una de estas."],
+      "Add your first task whenever you're ready. I'm here.": ["Aggiungi la prima attività quando vuoi. Io sono qui.", "Adaugă prima sarcină când ești gata. Sunt aici.", "Ajoutez votre première tâche quand vous voulez. Je suis là.", "Füg deine erste Aufgabe hinzu, wann immer du bereit bist. Ich bin da.", "Añade tu primera tarea cuando quieras. Aquí estoy."],
+      "All done. Nice work today, you can rest now.": ["Tutto fatto. Ottimo lavoro oggi, ora puoi riposare.", "Gata tot. Ai lucrat bine azi, acum te poți odihni.", "Tout est fait. Beau travail aujourd'hui, vous pouvez souffler.", "Alles erledigt. Gute Arbeit heute, jetzt darfst du ausruhen.", "Todo hecho. Buen trabajo hoy, ya puedes descansar."],
+      "Just one left. No rush, you're doing great.": ["Ne manca solo una. Con calma, stai andando alla grande.", "A mai rămas una. Fără grabă, te descurci minunat.", "Plus qu'une. Pas de stress, vous vous en sortez très bien.", "Nur noch eine. Keine Eile, du machst das super.", "Solo queda una. Sin prisa, lo estás haciendo genial."],
+      "A couple left. Take your time.": ["Ne restano un paio. Prenditi il tuo tempo.", "Au mai rămas câteva. Ia-ți timp.", "Il en reste quelques-unes. Prenez votre temps.", "Noch ein paar übrig. Lass dir Zeit.", "Quedan un par. Tómate tu tiempo."],
+      "Lots on the list today. Start with the easiest one.": ["Tante cose oggi. Inizia dalla più facile.", "Multe pe listă azi. Începe cu cea mai ușoară.", "Beaucoup de choses aujourd'hui. Commencez par la plus facile.", "Viel auf der Liste heute. Fang mit der leichtesten an.", "Mucho en la lista hoy. Empieza por la más fácil."],
+      "Not saving in this view. Open the page signed in to keep your streaks.": ["In questa vista non si salva. Apri la pagina con l'accesso per conservare le serie.", "Nu se salvează în această vizualizare. Deschide pagina autentificat ca să-ți păstrezi seriile.", "Rien n'est enregistré ici. Ouvrez la page en étant connecté pour garder vos séries.", "In dieser Ansicht wird nicht gespeichert. Öffne die Seite angemeldet, um deine Serien zu behalten.", "Esta vista no guarda. Abre la página con tu sesión iniciada para conservar tus rachas."],
+      "{1} of {2} done": ["{1} di {2} fatte", "{1} din {2} gata", "{1} sur {2} faites", "{1} von {2} erledigt", "{1} de {2} hechas"],
+      "1 freeze": ["1 congelamento", "1 înghețare", "1 gel", "1 Freeze", "1 congelación"],
+      "{1} freezes": ["{1} congelamenti", "{1} înghețări", "{1} gels", "{1} Freezes", "{1} congelaciones"],
+      "Auto freeze": ["Congelamento automatico", "Înghețare automată", "Gel automatique", "Auto-Freeze", "Congelación automática"],
+      "Auto freeze for {1}": ["Congelamento automatico per {1}", "Înghețare automată pentru {1}", "Gel automatique pour {1}", "Auto-Freeze für {1}", "Congelación automática para {1}"],
+      "Auto freeze on for “{1}”": ["Congelamento automatico attivo per “{1}”", "Înghețare automată pornită pentru „{1}”", "Gel automatique activé pour « {1} »", "Auto-Freeze an für „{1}“", "Congelación automática activada para “{1}”"],
+      "Auto freeze off for “{1}”": ["Congelamento automatico disattivato per “{1}”", "Înghețare automată oprită pentru „{1}”", "Gel automatique désactivé pour « {1} »", "Auto-Freeze aus für „{1}“", "Congelación automática desactivada para “{1}”"],
+      "Buy a freeze automatically when this streak is at risk and none are in stock": ["Compra un congelamento in automatico quando questa serie è a rischio e non ne hai", "Cumpără automat o înghețare când seria e în pericol și nu ai niciuna", "Acheter un gel automatiquement quand cette série est en danger et qu'il n'y en a plus", "Automatisch einen Freeze kaufen, wenn diese Serie gefährdet ist und keiner vorrätig ist", "Comprar una congelación automáticamente cuando esta racha esté en riesgo y no quede ninguna"],
+      "Auto-buy is off for all tasks. Turn it on in Progress.": ["L'acquisto automatico è disattivato per tutte le attività. Attivalo in Progressi.", "Cumpărarea automată e oprită pentru toate sarcinile. Pornește-o în Progres.", "L'achat automatique est désactivé pour toutes les tâches. Activez-le dans Progrès.", "Auto-Kauf ist für alle Aufgaben aus. Schalte ihn unter Fortschritt ein.", "La compra automática está desactivada para todas las tareas. Actívala en Progreso."],
+      "day streak": ["giorni di fila", "zile la rând", "jours d'affilée", "Tage in Folge", "días seguidos"],
+      "week streak": ["settimane di fila", "săptămâni la rând", "semaines d'affilée", "Wochen in Folge", "semanas seguidas"],
+      "frozen": ["congelata", "înghețată", "gelée", "eingefroren", "congelada"],
+      "on vacation": ["in vacanza", "în vacanță", "en vacances", "im Urlaub", "de vacaciones"],
+      "{1} this week": ["{1} questa settimana", "{1} săptămâna aceasta", "{1} cette semaine", "{1} diese Woche", "{1} esta semana"],
+      "No due date": ["Nessuna scadenza", "Fără termen", "Sans échéance", "Kein Fälligkeitsdatum", "Sin fecha límite"],
+      "Due today": ["Scade oggi", "Termen azi", "À faire aujourd'hui", "Heute fällig", "Vence hoy"],
+      "Due tomorrow": ["Scade domani", "Termen mâine", "À faire demain", "Morgen fällig", "Vence mañana"],
+      "Due in 2 days": ["Scade tra 2 giorni", "Termen peste 2 zile", "À faire dans 2 jours", "In 2 Tagen fällig", "Vence en 2 días"],
+      "Due today at {1}": ["Scade oggi alle {1}", "Termen azi la {1}", "À faire aujourd'hui à {1}", "Heute um {1} fällig", "Vence hoy a las {1}"],
+      "Due tomorrow at {1}": ["Scade domani alle {1}", "Termen mâine la {1}", "À faire demain à {1}", "Morgen um {1} fällig", "Vence mañana a las {1}"],
+      "Due in 2 days at {1}": ["Scade tra 2 giorni alle {1}", "Termen peste 2 zile la {1}", "À faire dans 2 jours à {1}", "In 2 Tagen um {1} fällig", "Vence en 2 días a las {1}"],
+      "Due {1} at {2}": ["Scade {1} alle {2}", "Termen {1} la {2}", "À faire le {1} à {2}", "Fällig {1} um {2}", "Vence el {1} a las {2}"],
+      "Due {1}": ["Scade {1}", "Termen {1}", "À faire le {1}", "Fällig {1}", "Vence el {1}"],
+      "Overdue by 1 day": ["In ritardo di 1 giorno", "Întârziată cu 1 zi", "En retard d'1 jour", "1 Tag überfällig", "Atrasada 1 día"],
+      "Overdue by {1} days": ["In ritardo di {1} giorni", "Întârziată cu {1} zile", "En retard de {1} jours", "{1} Tage überfällig", "Atrasada {1} días"],
+      "Overdue since {1}": ["In ritardo dalle {1}", "Întârziată de la {1}", "En retard depuis {1}", "Überfällig seit {1}", "Atrasada desde las {1}"],
+      "Done today": ["Fatta oggi", "Gata azi", "Faite aujourd'hui", "Heute erledigt", "Hecha hoy"],
+      "Done": ["Fatto", "Gata", "Fait", "Erledigt", "Hecho"],
+      "Done {1}": ["Fatta {1}", "Gata {1}", "Faite le {1}", "Erledigt {1}", "Hecha el {1}"],
+      "Done: {1}": ["Fatto: {1}", "Gata: {1}", "Fait : {1}", "Erledigt: {1}", "Hecho: {1}"],
+      "Done: {1}. Use the minus button to undo.": ["Fatto: {1}. Usa il pulsante meno per annullare.", "Gata: {1}. Folosește butonul minus ca să anulezi.", "Fait : {1}. Utilisez le bouton moins pour annuler.", "Erledigt: {1}. Mit der Minus-Taste rückgängig machen.", "Hecho: {1}. Usa el botón menos para deshacer."],
+      "Checked in {1} of {2}": ["Check-in {1} di {2}", "Bifat {1} din {2}", "Validé {1} sur {2}", "Abgehakt: {1} von {2}", "Registrado {1} de {2}"],
+      "+{1} coins": ["+{1} monete", "+{1} monede", "+{1} pièces", "+{1} Münzen", "+{1} monedas"],
+      "+{1} coins, {2}-day streak bonus": ["+{1} monete, bonus per {2} giorni di fila", "+{1} monede, bonus pentru {2} zile la rând", "+{1} pièces, bonus série de {2} jours", "+{1} Münzen, Bonus für {2} Tage in Folge", "+{1} monedas, bonus por racha de {2} días"],
+      "+{1} coins, {2}-week streak bonus": ["+{1} monete, bonus per {2} settimane di fila", "+{1} monede, bonus pentru {2} săptămâni la rând", "+{1} pièces, bonus série de {2} semaines", "+{1} Münzen, Bonus für {2} Wochen in Folge", "+{1} monedas, bonus por racha de {2} semanas"],
+      "Unchecked “{1}”": ["“{1}” non più fatta", "„{1}” debifată", "« {1} » décochée", "„{1}“ nicht mehr abgehakt", "“{1}” desmarcada"],
+      "Removed one check-in": ["Check-in rimosso", "Am scos o bifare", "Une validation retirée", "Ein Haken entfernt", "Registro quitado"],
+      "Deleted “{1}”. Your coins stay.": ["“{1}” eliminata. Le monete restano.", "„{1}” a fost ștearsă. Monedele rămân.", "« {1} » supprimée. Vos pièces restent.", "„{1}“ gelöscht. Deine Münzen bleiben.", "“{1}” eliminada. Tus monedas se quedan."],
+      "Not enough coins yet.": ["Non hai ancora abbastanza monete.", "Încă nu ai destule monede.", "Pas encore assez de pièces.", "Noch nicht genug Münzen.", "Aún no tienes suficientes monedas."],
+      "Daily streak freeze added": ["Congelamento giornaliero aggiunto", "Înghețare zilnică adăugată", "Gel quotidien ajouté", "Täglicher Freeze hinzugefügt", "Congelación diaria añadida"],
+      "Weekly streak freeze added": ["Congelamento settimanale aggiunto", "Înghețare săptămânală adăugată", "Gel hebdomadaire ajouté", "Wöchentlicher Freeze hinzugefügt", "Congelación semanal añadida"],
+      "Undo": ["Annulla", "Anulează", "Annuler", "Rückgängig", "Deshacer"],
+      "Undone": ["Annullato", "Anulat", "Annulé", "Rückgängig gemacht", "Deshecho"],
+      "Could not save. Your last change may be lost on reload.": ["Impossibile salvare. L'ultima modifica potrebbe andare persa ricaricando.", "Nu s-a putut salva. Ultima modificare se poate pierde la reîncărcare.", "Enregistrement impossible. La dernière modification peut être perdue au rechargement.", "Speichern fehlgeschlagen. Deine letzte Änderung geht beim Neuladen eventuell verloren.", "No se pudo guardar. Tu último cambio puede perderse al recargar."],
+      "Add one: {1}, {2} of {3}": ["Aggiungi uno: {1}, {2} di {3}", "Adaugă una: {1}, {2} din {3}", "Ajouter un : {1}, {2} sur {3}", "Eins hinzufügen: {1}, {2} von {3}", "Añadir uno: {1}, {2} de {3}"],
+      "Undo: {1}": ["Annulla: {1}", "Anulează: {1}", "Annuler : {1}", "Rückgängig: {1}", "Deshacer: {1}"],
+      "Mark done: {1}": ["Segna come fatta: {1}", "Marchează ca gata: {1}", "Marquer comme faite : {1}", "Als erledigt markieren: {1}", "Marcar como hecha: {1}"],
+      "Edit task: {1}": ["Modifica attività: {1}", "Editează sarcina: {1}", "Modifier la tâche : {1}", "Aufgabe bearbeiten: {1}", "Editar tarea: {1}"],
+      "Remove one check-in: {1}": ["Togli un check-in: {1}", "Scoate o bifare: {1}", "Retirer une validation : {1}", "Einen Haken entfernen: {1}", "Quitar un registro: {1}"],
+      "Delete task: {1}": ["Elimina attività: {1}", "Șterge sarcina: {1}", "Supprimer la tâche : {1}", "Aufgabe löschen: {1}", "Eliminar tarea: {1}"],
+      "Today's note for {1}": ["Nota di oggi per {1}", "Nota de azi pentru {1}", "Note du jour pour {1}", "Heutige Notiz zu {1}", "Nota de hoy para {1}"],
+      "Edit today's note: {1}": ["Modifica la nota di oggi: {1}", "Editează nota de azi: {1}", "Modifier la note du jour : {1}", "Heutige Notiz bearbeiten: {1}", "Editar la nota de hoy: {1}"],
+      "Add a note for today: {1}": ["Aggiungi una nota per oggi: {1}", "Adaugă o notă pentru azi: {1}", "Ajouter une note pour aujourd'hui : {1}", "Notiz für heute hinzufügen: {1}", "Añadir una nota para hoy: {1}"],
+      "Add amount or note": ["Aggiungi quantità o nota", "Adaugă cantitate sau notă", "Ajouter une quantité ou une note", "Menge oder Notiz hinzufügen", "Añadir cantidad o nota"],
+      "Add a note": ["Aggiungi una nota", "Adaugă o notă", "Ajouter une note", "Notiz hinzufügen", "Añadir una nota"],
+      "How did it go?": ["Com'è andata?", "Cum a mers?", "Comment ça s'est passé ?", "Wie lief es?", "¿Qué tal fue?"],
+      "Note": ["Nota", "Notă", "Note", "Notiz", "Nota"],
+      "Amount": ["Quantità", "Cantitate", "Quantité", "Menge", "Cantidad"],
+      "Amount ({1})": ["Quantità ({1})", "Cantitate ({1})", "Quantité ({1})", "Menge ({1})", "Cantidad ({1})"],
+      "Check-in {1} ({2})": ["Check-in {1} ({2})", "Bifarea {1} ({2})", "Validation {1} ({2})", "Haken {1} ({2})", "Registro {1} ({2})"],
+      "Save note": ["Salva nota", "Salvează nota", "Enregistrer la note", "Notiz speichern", "Guardar nota"],
+      "Remove note": ["Rimuovi nota", "Șterge nota", "Retirer la note", "Notiz entfernen", "Quitar nota"],
+      "Note removed": ["Nota rimossa", "Notă ștearsă", "Note retirée", "Notiz entfernt", "Nota quitada"],
+      "Note saved": ["Nota salvata", "Notă salvată", "Note enregistrée", "Notiz gespeichert", "Nota guardada"],
+      "Note cleared": ["Nota cancellata", "Notă golită", "Note effacée", "Notiz geleert", "Nota borrada"],
+
+      // ---- heads up ----
+      "“{1}” is overdue.": ["“{1}” è in ritardo.", "„{1}” a depășit termenul.", "« {1} » est en retard.", "„{1}“ ist überfällig.", "“{1}” está atrasada."],
+      "“{1}” is due in {2} min.": ["“{1}” scade tra {2} min.", "„{1}” are termen în {2} min.", "« {1} » est à faire dans {2} min.", "„{1}“ ist in {2} Min. fällig.", "“{1}” vence en {2} min."],
+      "“{1}” is due at {2}.": ["“{1}” scade alle {2}.", "„{1}” are termen la {2}.", "« {1} » est à faire à {2}.", "„{1}“ ist um {2} fällig.", "“{1}” vence a las {2}."],
+      "“{1}” is due today.": ["“{1}” scade oggi.", "„{1}” are termen azi.", "« {1} » est à faire aujourd'hui.", "„{1}“ ist heute fällig.", "“{1}” vence hoy."],
+      "“{1}” starts now at {2}.": ["“{1}” inizia ora a {2}.", "„{1}” începe acum, la {2}.", "« {1} » commence maintenant à {2}.", "„{1}“ beginnt jetzt in {2}.", "“{1}” empieza ahora en {2}."],
+      "“{1}” starts now.": ["“{1}” inizia ora.", "„{1}” începe acum.", "« {1} » commence maintenant.", "„{1}“ beginnt jetzt.", "“{1}” empieza ahora."],
+      "“{1}” starts in {2} at {3}.": ["“{1}” inizia tra {2} a {3}.", "„{1}” începe în {2}, la {3}.", "« {1} » commence dans {2} à {3}.", "„{1}“ beginnt in {2} in {3}.", "“{1}” empieza en {2} en {3}."],
+      "“{1}” starts in {2}.": ["“{1}” inizia tra {2}.", "„{1}” începe în {2}.", "« {1} » commence dans {2}.", "„{1}“ beginnt in {2}.", "“{1}” empieza en {2}."],
+      "Your {1}-day streak on “{2}” is still open today. A quick check-in keeps it going.{3}": ["La tua serie di {1} giorni su “{2}” è ancora aperta oggi. Un rapido check-in la mantiene viva.{3}", "Seria ta de {1} zile la „{2}” e încă deschisă azi. O bifare rapidă o ține în viață.{3}", "Votre série de {1} jours sur « {2} » est encore ouverte aujourd'hui. Une petite validation la prolonge.{3}", "Deine Serie von {1} Tagen bei „{2}“ ist heute noch offen. Kurz abhaken, und sie läuft weiter.{3}", "Tu racha de {1} días en “{2}” sigue abierta hoy. Un registro rápido la mantiene.{3}"],
+      "Your {1}-week streak on “{2}” ends Sunday night.{3}{4}": ["La tua serie di {1} settimane su “{2}” scade domenica sera.{3}{4}", "Seria ta de {1} săptămâni la „{2}” se încheie duminică seara.{3}{4}", "Votre série de {1} semaines sur « {2} » se termine dimanche soir.{3}{4}", "Deine Serie von {1} Wochen bei „{2}“ endet Sonntagabend.{3}{4}", "Tu racha de {1} semanas en “{2}” termina el domingo por la noche.{3}{4}"],
+      "{1} more to go.": ["Ne mancano {1}.", "Mai ai {1}.", "Encore {1}.", "Noch {1}.", "Faltan {1}."],
+      "You have a freeze in stock if you need it.": ["Hai un congelamento disponibile, se ti serve.", "Ai o înghețare disponibilă dacă ai nevoie.", "Vous avez un gel en réserve si besoin.", "Du hast einen Freeze vorrätig, falls nötig.", "Tienes una congelación disponible si la necesitas."],
+      "{1} things need a look. Check the Heads up card.": ["{1} cose da controllare. Guarda la scheda Attenzione.", "{1} lucruri cer atenție. Vezi cardul Atenție.", "{1} choses à vérifier. Consultez la carte À noter.", "{1} Dinge brauchen Aufmerksamkeit. Sieh dir die Hinweis-Karte an.", "{1} cosas que revisar. Mira la tarjeta Atención."],
+      "Got it": ["Ok", "Am înțeles", "Compris", "Verstanden", "Entendido"],
+
+      // ---- categories and suggestions ----
+      "Study": ["Studio", "Studiu", "Études", "Lernen", "Estudio"],
+      "Training": ["Allenamento", "Antrenament", "Entraînement", "Training", "Entrenamiento"],
+      "Health": ["Salute", "Sănătate", "Santé", "Gesundheit", "Salud"],
+      "Work": ["Lavoro", "Muncă", "Travail", "Arbeit", "Trabajo"],
+      "Home": ["Casa", "Casă", "Maison", "Zuhause", "Casa"],
+      "Money": ["Soldi", "Bani", "Argent", "Geld", "Dinero"],
+      "Make bed in the morning": ["Rifare il letto al mattino", "Fă patul dimineața", "Faire son lit le matin", "Morgens das Bett machen", "Hacer la cama por la mañana"],
+      "Stretch 10 min": ["Stretching 10 min", "Stretching 10 min", "Étirements 10 min", "10 Min. dehnen", "Estirar 10 min"],
+      "Train 3 times": ["Allenarsi 3 volte", "Antrenament de 3 ori", "S'entraîner 3 fois", "3-mal trainieren", "Entrenar 3 veces"],
+      "Plan next week": ["Pianificare la settimana", "Planifică săptămâna viitoare", "Planifier la semaine", "Nächste Woche planen", "Planificar la semana"],
+      "Lecture": ["Lezione", "Curs", "Cours", "Vorlesung", "Clase"],
+      "Study block": ["Blocco di studio", "Sesiune de studiu", "Séance d'études", "Lernblock", "Bloque de estudio"],
+      "{1} · {2}": ["{1} · {2}", "{1} · {2}", "{1} · {2}", "{1} · {2}", "{1} · {2}"],
+      "{1} · {2} x{3}": ["{1} · {2} x{3}", "{1} · {2} x{3}", "{1} · {2} x{3}", "{1} · {2} x{3}", "{1} · {2} x{3}"],
+      "{1} · {2} {3}": ["{1} · {2} {3}", "{1} · {2} {3}", "{1} · {2} {3}", "{1} · {2} {3}", "{1} · {2} {3}"],
+
+      // ---- mascots ----
+      "Classic": ["Classico", "Clasic", "Classique", "Klassisch", "Clásico"],
+      "Athlete (M)": ["Atleta (M)", "Atlet (M)", "Athlète (H)", "Sportler", "Atleta (H)"],
+      "Athlete (F)": ["Atleta (F)", "Atletă (F)", "Athlète (F)", "Sportlerin", "Atleta (M)"],
+      "Business": ["Business", "Business", "Affaires", "Business", "Negocios"],
+      "Slime": ["Slime", "Slime", "Slime", "Schleim", "Slime"],
+      "Frog": ["Rana", "Broască", "Grenouille", "Frosch", "Rana"],
+      "Robot": ["Robot", "Robot", "Robot", "Roboter", "Robot"],
+      "Lion": ["Leone", "Leu", "Lion", "Löwe", "León"],
+      "Sensei Panda": ["Panda Sensei", "Panda Sensei", "Panda Sensei", "Sensei-Panda", "Panda Sensei"],
+      "Champ Gorilla": ["Gorilla Campione", "Gorila Campion", "Gorille Champion", "Champion-Gorilla", "Gorila Campeón"],
+      "Golden slime": ["Slime d'oro", "Slime de aur", "Slime doré", "Goldschleim", "Slime dorado"],
+      "Fire": ["Fuoco", "Foc", "Feu", "Feuer", "Fuego"],
+      "Sun": ["Sole", "Soare", "Soleil", "Sonne", "Sol"],
+      "Mascots": ["Mascotte", "Mascote", "Mascottes", "Maskottchen", "Mascotas"],
+      "Mascot": ["Mascotte", "Mascotă", "Mascotte", "Maskottchen", "Mascota"],
+      "Buy new mascots with coins, or earn the rare ones with a long streak. Switch between the ones you have in Settings.": ["Compra nuove mascotte con le monete o guadagna quelle rare con una lunga serie. Cambiale in Impostazioni.", "Cumpără mascote noi cu monede sau câștigă-le pe cele rare cu o serie lungă. Schimbă între ele în Setări.", "Achetez de nouvelles mascottes avec vos pièces ou gagnez les rares avec une longue série. Changez-en dans Réglages.", "Kauf neue Maskottchen mit Münzen oder verdien dir die seltenen mit einer langen Serie. Wechseln kannst du in den Einstellungen.", "Compra mascotas nuevas con monedas o gana las raras con una racha larga. Cámbialas en Ajustes."],
+      "Your mascot": ["La tua mascotte", "Mascota ta", "Votre mascotte", "Dein Maskottchen", "Tu mascota"],
+      "Use": ["Usa", "Folosește", "Utiliser", "Nutzen", "Usar"],
+      "Yes, buy": ["Sì, compra", "Da, cumpără", "Oui, acheter", "Ja, kaufen", "Sí, comprar"],
+      "Buy for {1}": ["Compra per {1}", "Cumpără cu {1}", "Acheter pour {1}", "Kaufen für {1}", "Comprar por {1}"],
+      "need {1} more": ["ne servono altre {1}", "mai trebuie {1}", "encore {1}", "noch {1} nötig", "faltan {1}"],
+      "Buy {1} for {2} coins": ["Compra {1} per {2} monete", "Cumpără {1} cu {2} monede", "Acheter {1} pour {2} pièces", "{1} für {2} Münzen kaufen", "Comprar {1} por {2} monedas"],
+      "Spend {1} coins?": ["Spendere {1} monete?", "Cheltui {1} monede?", "Dépenser {1} pièces ?", "{1} Münzen ausgeben?", "¿Gastar {1} monedas?"],
+      "Reach a {1}-streak": ["Raggiungi una serie di {1}", "Atinge o serie de {1}", "Atteignez une série de {1}", "Erreiche eine {1}er-Serie", "Alcanza una racha de {1}"],
+      "best so far: {1}": ["record attuale: {1}", "cel mai bun până acum: {1}", "meilleure à ce jour : {1}", "bisher beste: {1}", "mejor hasta ahora: {1}"],
+      "New mascot unlocked: {1}, for a {2}-streak! Pick it in Settings.": ["Nuova mascotte sbloccata: {1}, per una serie di {2}! Sceglila in Impostazioni.", "Mascotă nouă deblocată: {1}, pentru o serie de {2}! Alege-o în Setări.", "Nouvelle mascotte débloquée : {1}, pour une série de {2} ! Choisissez-la dans Réglages.", "Neues Maskottchen freigeschaltet: {1}, für eine {2}er-Serie! Wähl es in den Einstellungen.", "¡Nueva mascota desbloqueada: {1}, por una racha de {2}! Elígela en Ajustes."],
+      "{1} is yours and is now your mascot.": ["{1} è tua ed è ora la tua mascotte.", "{1} e a ta și acum e mascota ta.", "{1} est à vous et devient votre mascotte.", "{1} gehört dir und ist jetzt dein Maskottchen.", "{1} es tuya y ahora es tu mascota."],
+      "{1} is now your mascot": ["{1} è ora la tua mascotte", "{1} e acum mascota ta", "{1} est maintenant votre mascotte", "{1} ist jetzt dein Maskottchen", "{1} es ahora tu mascota"],
+
+      // ---- progress ----
+      "Best streak": ["Serie migliore", "Cea mai bună serie", "Meilleure série", "Beste Serie", "Mejor racha"],
+      "check in to start one": ["fai un check-in per iniziarne una", "bifează ca să începi una", "validez pour en commencer une", "hak etwas ab, um eine zu starten", "registra algo para empezar una"],
+      "days, on “{1}”": ["giorni, su “{1}”", "zile, la „{1}”", "jours, sur « {1} »", "Tage, bei „{1}“", "días, en “{1}”"],
+      "weeks, on “{1}”": ["settimane, su “{1}”", "săptămâni, la „{1}”", "semaines, sur « {1} »", "Wochen, bei „{1}“", "semanas, en “{1}”"],
+      "Coins": ["Monete", "Monede", "Pièces", "Münzen", "Monedas"],
+      "to spend · {1} earned in total": ["da spendere · {1} guadagnate in tutto", "de cheltuit · {1} câștigate în total", "à dépenser · {1} gagnées au total", "verfügbar · {1} insgesamt verdient", "para gastar · {1} ganadas en total"],
+      "Active streaks": ["Serie attive", "Serii active", "Séries actives", "Aktive Serien", "Rachas activas"],
+      "daily and weekly tasks": ["attività giornaliere e settimanali", "sarcini zilnice și săptămânale", "tâches quotidiennes et hebdomadaires", "tägliche und wöchentliche Aufgaben", "tareas diarias y semanales"],
+      "This week": ["Questa settimana", "Săptămâna aceasta", "Cette semaine", "Diese Woche", "Esta semana"],
+      "check-ins": ["check-in", "bifări", "validations", "Haken", "registros"],
+      "Streak freezes": ["Congelamenti della serie", "Înghețări de serie", "Gels de série", "Serien-Freezes", "Congelaciones de racha"],
+      "Saves a streak when you miss a day or a week.": ["Salva una serie quando salti un giorno o una settimana.", "Salvează o serie când ratezi o zi sau o săptămână.", "Sauve une série quand vous manquez un jour ou une semaine.", "Rettet eine Serie, wenn du einen Tag oder eine Woche verpasst.", "Salva una racha cuando te saltas un día o una semana."],
+      "How it works": ["Come funziona", "Cum funcționează", "Comment ça marche", "So funktioniert's", "Cómo funciona"],
+      "A freeze is used on its own and freezes the flame. One freeze saves one task for one missed day or week, longest streaks first. It costs 2.5 check-ins.": ["Il congelamento si usa da solo e congela la fiamma. Un congelamento salva un'attività per un giorno o una settimana saltati, prima le serie più lunghe. Costa 2,5 check-in.", "Înghețarea se folosește singură și îngheață flacăra. O înghețare salvează o sarcină pentru o zi sau o săptămână ratată, întâi seriile cele mai lungi. Costă cât 2,5 bifări.", "Un gel s'utilise tout seul et gèle la flamme. Un gel sauve une tâche pour un jour ou une semaine manqués, les plus longues séries d'abord. Il coûte 2,5 validations.", "Ein Freeze wird automatisch eingesetzt und friert die Flamme ein. Ein Freeze rettet eine Aufgabe für einen verpassten Tag oder eine Woche, die längsten Serien zuerst. Er kostet so viel wie 2,5 Haken.", "Una congelación se usa sola y congela la llama. Una congelación salva una tarea por un día o una semana perdidos, primero las rachas más largas. Cuesta 2,5 registros."],
+      "With auto-buy on, coins are spent on a freeze when a streak would break and none are in stock. Each daily and weekly task also has its own Auto freeze switch (the snowflake) on the Tasks tab.": ["Con l'acquisto automatico, le monete si spendono per un congelamento quando una serie si interromperebbe e non ne hai. Ogni attività giornaliera e settimanale ha anche il suo interruttore (il fiocco di neve) nella scheda Attività.", "Cu cumpărarea automată, monedele se folosesc pe o înghețare când o serie s-ar rupe și nu ai niciuna. Fiecare sarcină zilnică și săptămânală are și propriul comutator (fulgul de nea) în fila Sarcini.", "Avec l'achat automatique, vos pièces paient un gel quand une série allait se rompre sans gel en réserve. Chaque tâche quotidienne et hebdomadaire a aussi son interrupteur (le flocon) dans l'onglet Tâches.", "Mit Auto-Kauf werden Münzen für einen Freeze ausgegeben, wenn eine Serie reißen würde und keiner vorrätig ist. Jede tägliche und wöchentliche Aufgabe hat außerdem einen eigenen Schalter (die Schneeflocke) im Tab Aufgaben.", "Con la compra automática, las monedas pagan una congelación cuando una racha se rompería y no queda ninguna. Cada tarea diaria y semanal tiene además su propio interruptor (el copo de nieve) en la pestaña Tareas."],
+      "Auto-buy freezes when none are in stock": ["Compra in automatico i congelamenti quando finiscono", "Cumpără automat înghețări când nu mai ai", "Acheter des gels automatiquement quand il n'y en a plus", "Freezes automatisch kaufen, wenn keine vorrätig sind", "Comprar congelaciones automáticamente cuando no quede ninguna"],
+      "Daily freeze": ["Congelamento giornaliero", "Înghețare zilnică", "Gel quotidien", "Täglicher Freeze", "Congelación diaria"],
+      "Works on every daily task.": ["Vale per ogni attività giornaliera.", "Funcționează pentru orice sarcină zilnică.", "Fonctionne sur chaque tâche quotidienne.", "Gilt für jede tägliche Aufgabe.", "Sirve para cada tarea diaria."],
+      "Weekly freeze": ["Congelamento settimanale", "Înghețare săptămânală", "Gel hebdomadaire", "Wöchentlicher Freeze", "Congelación semanal"],
+      "Works on every weekly task.": ["Vale per ogni attività settimanale.", "Funcționează pentru orice sarcină săptămânală.", "Fonctionne sur chaque tâche hebdomadaire.", "Gilt für jede wöchentliche Aufgabe.", "Sirve para cada tarea semanal."],
+      "1 freeze in stock": ["1 congelamento disponibile", "1 înghețare disponibilă", "1 gel en réserve", "1 Freeze vorrätig", "1 congelación disponible"],
+      "{1} freezes in stock": ["{1} congelamenti disponibili", "{1} înghețări disponibile", "{1} gels en réserve", "{1} Freezes vorrätig", "{1} congelaciones disponibles"],
+      "1 freeze in stock · need {1} more coins": ["1 congelamento disponibile · servono altre {1} monete", "1 înghețare disponibilă · mai trebuie {1} monede", "1 gel en réserve · encore {1} pièces", "1 Freeze vorrätig · noch {1} Münzen nötig", "1 congelación disponible · faltan {1} monedas"],
+      "{1} freezes in stock · need {2} more coins": ["{1} congelamenti disponibili · servono altre {2} monete", "{1} înghețări disponibile · mai trebuie {2} monede", "{1} gels en réserve · encore {2} pièces", "{1} Freezes vorrätig · noch {2} Münzen nötig", "{1} congelaciones disponibles · faltan {2} monedas"],
+      "Buy a daily streak freeze for {1} coins": ["Compra un congelamento giornaliero per {1} monete", "Cumpără o înghețare zilnică cu {1} monede", "Acheter un gel quotidien pour {1} pièces", "Täglichen Freeze für {1} Münzen kaufen", "Comprar una congelación diaria por {1} monedas"],
+      "Buy a weekly streak freeze for {1} coins": ["Compra un congelamento settimanale per {1} monete", "Cumpără o înghețare săptămânală cu {1} monede", "Acheter un gel hebdomadaire pour {1} pièces", "Wöchentlichen Freeze für {1} Münzen kaufen", "Comprar una congelación semanal por {1} monedas"],
+      "Bought a daily freeze ({1} coins) and used it on “{2}”.": ["Comprato un congelamento giornaliero ({1} monete) e usato su “{2}”.", "Ai cumpărat o înghețare zilnică ({1} monede) și ai folosit-o la „{2}”.", "Gel quotidien acheté ({1} pièces) et utilisé sur « {2} ».", "Täglichen Freeze gekauft ({1} Münzen) und bei „{2}“ eingesetzt.", "Congelación diaria comprada ({1} monedas) y usada en “{2}”."],
+      "Bought a weekly freeze ({1} coins) and used it on “{2}”.": ["Comprato un congelamento settimanale ({1} monete) e usato su “{2}”.", "Ai cumpărat o înghețare săptămânală ({1} monede) și ai folosit-o la „{2}”.", "Gel hebdomadaire acheté ({1} pièces) et utilisé sur « {2} ».", "Wöchentlichen Freeze gekauft ({1} Münzen) und bei „{2}“ eingesetzt.", "Congelación semanal comprada ({1} monedas) y usada en “{2}”."],
+      "Streak freeze used on “{1}”.": ["Congelamento usato su “{1}”.", "Înghețare folosită la „{1}”.", "Gel utilisé sur « {1} ».", "Freeze bei „{1}“ eingesetzt.", "Congelación usada en “{1}”."],
+      "Previous month": ["Mese precedente", "Luna anterioară", "Mois précédent", "Vorheriger Monat", "Mes anterior"],
+      "Next month": ["Mese successivo", "Luna următoare", "Mois suivant", "Nächster Monat", "Mes siguiente"],
+      "Nothing logged this day.": ["Niente registrato in questo giorno.", "Nimic înregistrat în această zi.", "Rien d'enregistré ce jour-là.", "An diesem Tag nichts eingetragen.", "Nada registrado este día."],
+      "{1}, 1 task done": ["{1}, 1 attività fatta", "{1}, 1 sarcină gata", "{1}, 1 tâche faite", "{1}, 1 Aufgabe erledigt", "{1}, 1 tarea hecha"],
+      "{1}, {2} tasks done": ["{1}, {2} attività fatte", "{1}, {2} sarcini gata", "{1}, {2} tâches faites", "{1}, {2} Aufgaben erledigt", "{1}, {2} tareas hechas"],
+      "Streaks": ["Serie", "Serii", "Séries", "Serien", "Rachas"],
+      "Now": ["Ora", "Acum", "En cours", "Jetzt", "Ahora"],
+      "· Best": ["· Record", "· Record", "· Record", "· Bestwert", "· Récord"],
+      "days": ["giorni", "zile", "jours", "Tage", "días"],
+      "weeks": ["settimane", "săptămâni", "semaines", "Wochen", "semanas"],
+
+      // ---- settings ----
+      "Habits, tasks and your weekly schedule": ["Abitudini, attività e la tua agenda settimanale", "Obiceiuri, sarcini și programul tău săptămânal", "Habitudes, tâches et votre agenda de la semaine", "Gewohnheiten, Aufgaben und dein Wochenplan", "Hábitos, tareas y tu agenda semanal"],
+      "Your name": ["Il tuo nome", "Numele tău", "Votre prénom", "Dein Name", "Tu nombre"],
+      "Shown in the header": ["Mostrato nell'intestazione", "Apare în antet", "Affiché en haut", "Wird oben angezeigt", "Se muestra arriba"],
+      "Background": ["Sfondo", "Fundal", "Fond", "Hintergrund", "Fondo"],
+      "Light": ["Chiaro", "Luminos", "Clair", "Hell", "Claro"],
+      "Dark": ["Scuro", "Întunecat", "Sombre", "Dunkel", "Oscuro"],
+      "Auto (match device)": ["Auto (come il dispositivo)", "Automat (ca dispozitivul)", "Auto (comme l'appareil)", "Automatisch (wie das Gerät)", "Automático (como el dispositivo)"],
+      "Language": ["Lingua", "Limbă", "Langue", "Sprache", "Idioma"],
+      "{1} more to unlock in Progress": ["Altre {1} da sbloccare in Progressi", "Încă {1} de deblocat în Progres", "{1} de plus à débloquer dans Progrès", "{1} weitere unter Fortschritt freischaltbar", "{1} más por desbloquear en Progreso"],
+      "Primary colour (header and bottom bar)": ["Colore principale (intestazione e barra in basso)", "Culoarea principală (antet și bara de jos)", "Couleur principale (en-tête et barre du bas)", "Hauptfarbe (Kopfzeile und untere Leiste)", "Color principal (cabecera y barra inferior)"],
+      "Secondary colour (Tasks tab and highlights)": ["Colore secondario (scheda Attività ed evidenziazioni)", "Culoarea secundară (fila Sarcini și evidențieri)", "Couleur secondaire (onglet Tâches et accents)", "Zweitfarbe (Tab Aufgaben und Hervorhebungen)", "Color secundario (pestaña Tareas y resaltados)"],
+      "{1}, custom colour": ["{1}, colore personalizzato", "{1}, culoare personalizată", "{1}, couleur personnalisée", "{1}, eigene Farbe", "{1}, color personalizado"],
+      "Reset colours": ["Ripristina colori", "Resetează culorile", "Couleurs par défaut", "Farben zurücksetzen", "Restablecer colores"],
+      "Teal": ["Verde acqua", "Turcoaz", "Sarcelle", "Petrol", "Verde azulado"],
+      "Blue": ["Blu", "Albastru", "Bleu", "Blau", "Azul"],
+      "Purple": ["Viola", "Mov", "Violet", "Lila", "Morado"],
+      "Green": ["Verde", "Verde", "Vert", "Grün", "Verde"],
+      "Slate": ["Ardesia", "Ardezie", "Ardoise", "Schiefer", "Pizarra"],
+      "Orange": ["Arancione", "Portocaliu", "Orange", "Orange", "Naranja"],
+      "Red": ["Rosso", "Roșu", "Rouge", "Rot", "Rojo"],
+      "Pink": ["Rosa", "Roz", "Rose", "Pink", "Rosa"],
+      "Yellow": ["Giallo", "Galben", "Jaune", "Gelb", "Amarillo"],
+      "24-hour clock": ["Orologio a 24 ore", "Ceas de 24 de ore", "Horloge sur 24 h", "24-Stunden-Uhr", "Reloj de 24 horas"],
+      "Animate check marks and streak flames": ["Anima spunte e fiamme delle serie", "Animează bifele și flăcările seriilor", "Animer les coches et les flammes", "Haken und Flammen animieren", "Animar marcas y llamas de racha"],
+      "Task reminders (due soon, streaks at risk)": ["Promemoria attività (scadenze vicine, serie a rischio)", "Mementouri pentru sarcini (termene apropiate, serii în pericol)", "Rappels de tâches (échéances proches, séries en danger)", "Aufgaben-Erinnerungen (bald fällig, Serien in Gefahr)", "Recordatorios de tareas (vencen pronto, rachas en riesgo)"],
+      "Schedule reminders (events about to start)": ["Promemoria agenda (eventi in arrivo)", "Mementouri pentru program (evenimente care încep)", "Rappels d'agenda (événements imminents)", "Kalender-Erinnerungen (Termine beginnen bald)", "Recordatorios de agenda (eventos a punto de empezar)"],
+      "Loud alerts (sound and a big pop-up)": ["Avvisi forti (suono e grande finestra)", "Alerte puternice (sunet și fereastră mare)", "Alertes sonores (son et grande fenêtre)", "Laute Hinweise (Ton und großes Fenster)", "Alertas fuertes (sonido y ventana grande)"],
+      "Test alert": ["Prova avviso", "Testează alerta", "Tester l'alerte", "Hinweis testen", "Probar alerta"],
+      "This is what a reminder looks like.": ["Ecco come appare un promemoria.", "Așa arată un memento.", "Voici à quoi ressemble un rappel.", "So sieht eine Erinnerung aus.", "Así se ve un recordatorio."],
+      "Warn me about open daily streaks from": ["Avvisami delle serie giornaliere aperte dalle", "Anunță-mă despre seriile zilnice deschise de la", "Me prévenir des séries du jour non faites à partir de", "Warne mich vor offenen Tagesserien ab", "Avisarme de rachas diarias pendientes desde"],
+      "Allow system notifications": ["Consenti notifiche di sistema", "Permite notificările sistemului", "Autoriser les notifications", "Systembenachrichtigungen erlauben", "Permitir notificaciones del sistema"],
+      "Notifications aren't available here.": ["Le notifiche non sono disponibili qui.", "Notificările nu sunt disponibile aici.", "Les notifications ne sont pas disponibles ici.", "Benachrichtigungen sind hier nicht verfügbar.", "Las notificaciones no están disponibles aquí."],
+      "System notifications are on while the app is open.": ["Le notifiche di sistema sono attive mentre l'app è aperta.", "Notificările sistemului sunt pornite cât timp aplicația e deschisă.", "Les notifications sont actives tant que l'appli est ouverte.", "Systembenachrichtigungen sind an, solange die App geöffnet ist.", "Las notificaciones del sistema funcionan mientras la app está abierta."],
+      "System notifications are on while this page is open.": ["Le notifiche di sistema sono attive mentre questa pagina è aperta.", "Notificările sistemului sunt pornite cât timp pagina e deschisă.", "Les notifications sont actives tant que cette page est ouverte.", "Systembenachrichtigungen sind an, solange diese Seite geöffnet ist.", "Las notificaciones del sistema funcionan mientras esta página está abierta."],
+      "System notifications are blocked in your browser settings.": ["Le notifiche di sistema sono bloccate nelle impostazioni del browser.", "Notificările sistemului sunt blocate în setările browserului.", "Les notifications sont bloquées dans les réglages du navigateur.", "Systembenachrichtigungen sind in den Browser-Einstellungen blockiert.", "Las notificaciones del sistema están bloqueadas en los ajustes del navegador."],
+      "Welcome!": ["Benvenuto!", "Bun venit!", "Bienvenue !", "Willkommen!", "¡Bienvenido!"],
+      "What should I call you?": ["Come ti chiami?", "Cum să-ți spun?", "Comment dois-je vous appeler ?", "Wie soll ich dich nennen?", "¿Cómo te llamo?"],
+      "Let's go": ["Andiamo", "Să începem", "C'est parti", "Los geht's", "Vamos"],
+      "Skip for now": ["Salta per ora", "Sari peste deocamdată", "Plus tard", "Später", "Omitir por ahora"],
+
+      // ---- this computer ----
+      "On this computer": ["Su questo computer", "Pe acest computer", "Sur cet ordinateur", "Auf diesem Computer", "En este ordenador"],
+      "Start Task Tracker when I turn on my computer": ["Avvia Task Tracker all'accensione del computer", "Pornește Task Tracker când pornesc computerul", "Lancer Task Tracker au démarrage de l'ordinateur", "Task Tracker beim Einschalten des Computers starten", "Abrir Task Tracker al encender el ordenador"],
+      "Start quietly in the tray, without opening the window": ["Avvia in silenzio nell'area di notifica, senza aprire la finestra", "Pornește discret în bara de sistem, fără să deschidă fereastra", "Démarrer discrètement dans la zone de notification, sans ouvrir la fenêtre", "Leise im Infobereich starten, ohne Fenster", "Iniciar en segundo plano en la bandeja, sin abrir la ventana"],
+      "Keep running in the tray when I close the window": ["Resta attivo nell'area di notifica quando chiudo la finestra", "Rămâi activ în bara de sistem când închid fereastra", "Continuer dans la zone de notification à la fermeture", "Beim Schließen im Infobereich weiterlaufen", "Seguir en la bandeja al cerrar la ventana"],
+      "Switching the window style": ["Cambio dello stile della finestra", "Se schimbă stilul ferestrei", "Changement du style de fenêtre", "Fensterstil wird gewechselt", "Cambiando el estilo de la ventana"],
+      "Borderless window (slim top bar instead of the Windows frame)": ["Finestra senza bordi (barra sottile al posto della cornice di Windows)", "Fereastră fără margini (bară subțire în locul ramei Windows)", "Fenêtre sans bordure (fine barre en haut au lieu du cadre Windows)", "Randloses Fenster (schmale Leiste statt Windows-Rahmen)", "Ventana sin bordes (barra fina en lugar del marco de Windows)"],
+      "See-through background (your desktop shows behind the app)": ["Sfondo trasparente (si vede il desktop dietro l'app)", "Fundal transparent (desktopul se vede în spatele aplicației)", "Fond transparent (le bureau se voit derrière l'appli)", "Durchsichtiger Hintergrund (der Desktop scheint durch)", "Fondo transparente (se ve el escritorio detrás de la app)"],
+      "How see-through: {1}%": ["Trasparenza: {1}%", "Transparență: {1}%", "Transparence : {1} %", "Durchsichtigkeit: {1} %", "Transparencia: {1} %"],
+      "Reminders and pop-ups only appear while the app is running, so keep it in the tray. Quit it from the tray icon.": ["Promemoria e avvisi compaiono solo con l'app in esecuzione, quindi tienila nell'area di notifica. Chiudila dall'icona lì.", "Mementourile și ferestrele apar doar cât aplicația rulează, așa că ține-o în bara de sistem. Închide-o din pictograma de acolo.", "Les rappels n'apparaissent que si l'appli tourne : gardez-la dans la zone de notification. Quittez-la depuis son icône.", "Erinnerungen erscheinen nur, solange die App läuft. Lass sie also im Infobereich. Beenden über das Symbol dort.", "Los recordatorios solo aparecen con la app abierta, así que déjala en la bandeja. Ciérrala desde su icono."],
+      "Start on boot only works in the installed version of the app.": ["L'avvio automatico funziona solo nella versione installata.", "Pornirea automată merge doar în versiunea instalată.", "Le lancement au démarrage ne marche que dans la version installée.", "Autostart funktioniert nur in der installierten Version.", "El inicio automático solo funciona en la versión instalada."],
+
+      // ---- install ----
+      "Installed app": ["App installata", "Aplicație instalată", "Appli installée", "Installierte App", "App instalada"],
+      "Install the app": ["Installa l'app", "Instalează aplicația", "Installer l'appli", "App installieren", "Instalar la app"],
+      "Install Task Tracker": ["Installa Task Tracker", "Instalează Task Tracker", "Installer Task Tracker", "Task Tracker installieren", "Instalar Task Tracker"],
+      "Task Tracker is installed. Find it in your Start menu or app list.": ["Task Tracker è installato. Lo trovi nel menu Start o nell'elenco delle app.", "Task Tracker e instalat. Îl găsești în meniul Start sau în lista de aplicații.", "Task Tracker est installé. Retrouvez-le dans le menu Démarrer ou la liste des applis.", "Task Tracker ist installiert. Du findest es im Startmenü oder in der App-Liste.", "Task Tracker está instalado. Búscalo en el menú Inicio o en tus apps."],
+      "Task Tracker is on your home screen. Reminders show while the app is open or in your recent apps.": ["Task Tracker è nella schermata Home. I promemoria compaiono mentre l'app è aperta o tra le app recenti.", "Task Tracker e pe ecranul de pornire. Mementourile apar cât aplicația e deschisă sau printre aplicațiile recente.", "Task Tracker est sur votre écran d'accueil. Les rappels s'affichent quand l'appli est ouverte ou dans les applis récentes.", "Task Tracker ist auf deinem Startbildschirm. Erinnerungen kommen, solange die App offen oder in den letzten Apps ist.", "Task Tracker está en tu pantalla de inicio. Los recordatorios aparecen con la app abierta o en apps recientes."],
+      "To open Task Tracker when you sign in to Windows: open Edge, type edge://apps in the address bar, open the menu on Task Tracker and turn on Start app when you sign in.": ["Per aprire Task Tracker all'accesso a Windows: apri Edge, scrivi edge://apps nella barra degli indirizzi, apri il menu di Task Tracker e attiva l'avvio all'accesso.", "Ca Task Tracker să pornească la conectarea în Windows: deschide Edge, scrie edge://apps în bara de adrese, deschide meniul lui Task Tracker și activează pornirea la conectare.", "Pour ouvrir Task Tracker à la connexion Windows : ouvrez Edge, tapez edge://apps dans la barre d'adresse, ouvrez le menu de Task Tracker et activez le démarrage à la connexion.", "Damit Task Tracker bei der Windows-Anmeldung startet: Edge öffnen, edge://apps in die Adressleiste eingeben, das Menü von Task Tracker öffnen und Start bei Anmeldung aktivieren.", "Para abrir Task Tracker al iniciar sesión en Windows: abre Edge, escribe edge://apps en la barra de direcciones, abre el menú de Task Tracker y activa iniciar al iniciar sesión."],
+      "Put Task Tracker on your home screen. It opens full screen like any other app and works offline.": ["Metti Task Tracker nella schermata Home. Si apre a schermo intero come le altre app e funziona offline.", "Pune Task Tracker pe ecranul de pornire. Se deschide pe tot ecranul ca orice aplicație și merge offline.", "Ajoutez Task Tracker à votre écran d'accueil. Il s'ouvre en plein écran comme une appli et marche hors ligne.", "Leg Task Tracker auf deinen Startbildschirm. Es öffnet im Vollbild wie jede App und funktioniert offline.", "Pon Task Tracker en tu pantalla de inicio. Se abre a pantalla completa como cualquier app y funciona sin conexión."],
+      "Get Task Tracker in its own window, with an icon in your Start menu and taskbar. Nothing to download and no Windows warnings.": ["Usa Task Tracker in una finestra tutta sua, con un'icona nel menu Start e nella barra delle applicazioni. Niente da scaricare e nessun avviso di Windows.", "Folosește Task Tracker în fereastra lui, cu pictogramă în meniul Start și în bara de activități. Nimic de descărcat și fără avertismente Windows.", "Utilisez Task Tracker dans sa propre fenêtre, avec une icône dans le menu Démarrer et la barre des tâches. Rien à télécharger, aucun avertissement Windows.", "Nutze Task Tracker im eigenen Fenster, mit Symbol im Startmenü und in der Taskleiste. Kein Download, keine Windows-Warnungen.", "Usa Task Tracker en su propia ventana, con icono en el menú Inicio y la barra de tareas. Sin descargas ni avisos de Windows."],
+      "In Chrome, open the ⋮ menu and tap Install app (or Add to home screen).": ["In Chrome, apri il menu ⋮ e tocca Installa app (o Aggiungi a schermata Home).", "În Chrome, deschide meniul ⋮ și atinge Instalează aplicația (sau Adaugă pe ecranul de pornire).", "Dans Chrome, ouvrez le menu ⋮ et touchez Installer l'appli (ou Ajouter à l'écran d'accueil).", "Öffne in Chrome das Menü ⋮ und tippe auf App installieren (oder Zum Startbildschirm hinzufügen).", "En Chrome, abre el menú ⋮ y toca Instalar app (o Añadir a pantalla de inicio)."],
+      "In Edge or Chrome, click the install icon at the right end of the address bar, or open the ⋯ menu and choose Apps, then Install this site as an app.": ["In Edge o Chrome, clicca l'icona di installazione a destra nella barra degli indirizzi, oppure apri il menu ⋯ e scegli App, poi Installa questo sito come app.", "În Edge sau Chrome, apasă pictograma de instalare din dreapta barei de adrese sau deschide meniul ⋯ și alege Aplicații, apoi Instalează site-ul ca aplicație.", "Dans Edge ou Chrome, cliquez sur l'icône d'installation à droite de la barre d'adresse, ou ouvrez le menu ⋯ et choisissez Applications, puis Installer ce site en tant qu'application.", "Klicke in Edge oder Chrome rechts in der Adressleiste auf das Installationssymbol, oder öffne das Menü ⋯ und wähle Apps, dann Diese Website als App installieren.", "En Edge o Chrome, haz clic en el icono de instalar a la derecha de la barra de direcciones, o abre el menú ⋯ y elige Aplicaciones, luego Instalar este sitio como aplicación."],
+
+      // ---- sync ----
+      "Sync": ["Sincronizzazione", "Sincronizare", "Synchronisation", "Synchronisierung", "Sincronización"],
+      "Keep your PC and phone in step. Create an account once, then log in with it on each device. What's already on this device is kept and added in.": ["Tieni PC e telefono allineati. Crea un account una volta, poi accedi con quello su ogni dispositivo. Quello che c'è già qui viene conservato e unito.", "Ține PC-ul și telefonul la zi. Creează un cont o dată, apoi conectează-te cu el pe fiecare dispozitiv. Ce e deja pe acest dispozitiv se păstrează și se adaugă.", "Gardez PC et téléphone synchronisés. Créez un compte une fois, puis connectez-vous avec sur chaque appareil. Ce qui est déjà ici est conservé et ajouté.", "Halte PC und Handy auf dem gleichen Stand. Einmal ein Konto erstellen, dann auf jedem Gerät damit anmelden. Was schon auf diesem Gerät ist, bleibt erhalten und wird ergänzt.", "Mantén tu PC y tu móvil al día. Crea una cuenta una vez y entra con ella en cada dispositivo. Lo que ya hay aquí se conserva y se suma."],
+      "Email": ["Email", "Email", "E-mail", "E-Mail", "Correo"],
+      "Password (at least 6 characters)": ["Password (almeno 6 caratteri)", "Parolă (cel puțin 6 caractere)", "Mot de passe (6 caractères min.)", "Passwort (mindestens 6 Zeichen)", "Contraseña (mínimo 6 caracteres)"],
+      "Log in": ["Accedi", "Conectează-te", "Se connecter", "Anmelden", "Entrar"],
+      "Create account": ["Crea account", "Creează cont", "Créer un compte", "Konto erstellen", "Crear cuenta"],
+      "Forgot password?": ["Password dimenticata?", "Ai uitat parola?", "Mot de passe oublié ?", "Passwort vergessen?", "¿Olvidaste la contraseña?"],
+      "Sync now": ["Sincronizza ora", "Sincronizează acum", "Synchroniser", "Jetzt synchronisieren", "Sincronizar ahora"],
+      "Log out": ["Esci", "Deconectează-te", "Se déconnecter", "Abmelden", "Cerrar sesión"],
+      "Logged in as {1}. Log in with the same email on your other devices and they all stay the same.": ["Accesso effettuato come {1}. Accedi con la stessa email sugli altri dispositivi e resteranno tutti uguali.", "Conectat ca {1}. Conectează-te cu același email pe celelalte dispozitive și toate rămân la fel.", "Connecté en tant que {1}. Connectez-vous avec le même e-mail sur vos autres appareils pour qu'ils restent identiques.", "Angemeldet als {1}. Melde dich auf deinen anderen Geräten mit derselben E-Mail an, dann bleiben alle gleich.", "Sesión iniciada como {1}. Entra con el mismo correo en tus otros dispositivos y todos quedarán iguales."],
+      "Logged out. Your data stays on this device.": ["Disconnesso. I tuoi dati restano su questo dispositivo.", "Te-ai deconectat. Datele rămân pe acest dispozitiv.", "Déconnecté. Vos données restent sur cet appareil.", "Abgemeldet. Deine Daten bleiben auf diesem Gerät.", "Sesión cerrada. Tus datos se quedan en este dispositivo."],
+      "Syncing…": ["Sincronizzazione…", "Se sincronizează…", "Synchronisation…", "Wird synchronisiert…", "Sincronizando…"],
+      "Synced · just now": ["Sincronizzato · ora", "Sincronizat · chiar acum", "Synchronisé · à l'instant", "Synchronisiert · gerade eben", "Sincronizado · ahora mismo"],
+      "Synced · {1} seconds ago": ["Sincronizzato · {1} secondi fa", "Sincronizat · acum {1} secunde", "Synchronisé · il y a {1} secondes", "Synchronisiert · vor {1} Sekunden", "Sincronizado · hace {1} segundos"],
+      "Synced · {1} min ago": ["Sincronizzato · {1} min fa", "Sincronizat · acum {1} min", "Synchronisé · il y a {1} min", "Synchronisiert · vor {1} Min.", "Sincronizado · hace {1} min"],
+      "Waiting to sync": ["In attesa di sincronizzare", "Se așteaptă sincronizarea", "En attente de synchronisation", "Warte auf Synchronisierung", "Esperando para sincronizar"],
+      "Offline. Your changes are saved here and sync when you're back online.": ["Offline. Le modifiche sono salvate qui e si sincronizzano quando torni online.", "Offline. Modificările sunt salvate aici și se sincronizează când revii online.", "Hors ligne. Vos modifications sont enregistrées ici et se synchroniseront au retour en ligne.", "Offline. Deine Änderungen sind hier gespeichert und werden synchronisiert, sobald du wieder online bist.", "Sin conexión. Tus cambios se guardan aquí y se sincronizan al volver a estar en línea."],
+      "Couldn't sync just now. It tries again on its own.": ["Sincronizzazione non riuscita. Riproverà da sola.", "Sincronizarea n-a mers acum. Va reîncerca singură.", "Synchronisation impossible pour l'instant. Nouvel essai automatique.", "Synchronisierung gerade nicht möglich. Es wird automatisch erneut versucht.", "No se pudo sincronizar ahora. Lo volverá a intentar sola."],
+      "Enter your email address, like name@example.com.": ["Inserisci il tuo indirizzo email, ad esempio nome@esempio.com.", "Introdu adresa de email, de exemplu nume@exemplu.com.", "Saisissez votre adresse e-mail, par exemple nom@exemple.com.", "Gib deine E-Mail-Adresse ein, z. B. name@beispiel.de.", "Escribe tu correo, por ejemplo nombre@ejemplo.com."],
+      "The password needs at least 6 characters.": ["La password deve avere almeno 6 caratteri.", "Parola trebuie să aibă cel puțin 6 caractere.", "Le mot de passe doit faire au moins 6 caractères.", "Das Passwort braucht mindestens 6 Zeichen.", "La contraseña necesita al menos 6 caracteres."],
+      "Creating your account…": ["Creazione dell'account…", "Se creează contul…", "Création du compte…", "Konto wird erstellt…", "Creando tu cuenta…"],
+      "Logging in…": ["Accesso in corso…", "Se face conectarea…", "Connexion…", "Anmeldung läuft…", "Entrando…"],
+      "Account created. Your data is now syncing.": ["Account creato. I tuoi dati si stanno sincronizzando.", "Cont creat. Datele tale se sincronizează acum.", "Compte créé. Vos données se synchronisent.", "Konto erstellt. Deine Daten werden jetzt synchronisiert.", "Cuenta creada. Tus datos ya se están sincronizando."],
+      "Logged in. Syncing your data.": ["Accesso effettuato. Sincronizzazione dei dati.", "Conectat. Se sincronizează datele.", "Connecté. Synchronisation de vos données.", "Angemeldet. Deine Daten werden synchronisiert.", "Sesión iniciada. Sincronizando tus datos."],
+      "There's already an account with that email. Use Log in instead.": ["Esiste già un account con questa email. Usa Accedi.", "Există deja un cont cu acest email. Folosește Conectează-te.", "Un compte existe déjà avec cet e-mail. Utilisez Se connecter.", "Mit dieser E-Mail gibt es schon ein Konto. Nutze Anmelden.", "Ya hay una cuenta con ese correo. Usa Entrar."],
+      "That email and password don't match an account. Check them, or create an account.": ["Email e password non corrispondono a un account. Controllale o crea un account.", "Emailul și parola nu se potrivesc cu niciun cont. Verifică-le sau creează un cont.", "Cet e-mail et ce mot de passe ne correspondent à aucun compte. Vérifiez-les ou créez un compte.", "E-Mail und Passwort passen zu keinem Konto. Prüf sie oder erstelle ein Konto.", "Ese correo y esa contraseña no coinciden con ninguna cuenta. Revísalos o crea una cuenta."],
+      "Pick a longer password (at least 6 characters).": ["Scegli una password più lunga (almeno 6 caratteri).", "Alege o parolă mai lungă (cel puțin 6 caractere).", "Choisissez un mot de passe plus long (6 caractères min.).", "Wähle ein längeres Passwort (mindestens 6 Zeichen).", "Elige una contraseña más larga (mínimo 6 caracteres)."],
+      "That email address doesn't look right.": ["Questo indirizzo email non sembra corretto.", "Adresa de email nu pare corectă.", "Cette adresse e-mail semble incorrecte.", "Diese E-Mail-Adresse sieht nicht richtig aus.", "Ese correo no parece correcto."],
+      "Too many tries. Wait a few minutes, then try again.": ["Troppi tentativi. Aspetta qualche minuto e riprova.", "Prea multe încercări. Așteaptă câteva minute și încearcă din nou.", "Trop d'essais. Attendez quelques minutes puis réessayez.", "Zu viele Versuche. Warte ein paar Minuten und versuch es dann erneut.", "Demasiados intentos. Espera unos minutos y vuelve a intentarlo."],
+      "Couldn't reach the sync service. Check your internet connection and try again.": ["Impossibile raggiungere il servizio di sincronizzazione. Controlla la connessione e riprova.", "Serviciul de sincronizare nu răspunde. Verifică internetul și încearcă din nou.", "Service de synchronisation injoignable. Vérifiez votre connexion et réessayez.", "Der Sync-Dienst ist nicht erreichbar. Prüf deine Internetverbindung und versuch es erneut.", "No se pudo conectar con el servicio de sincronización. Revisa tu conexión y vuelve a intentarlo."],
+      "Type your email above first, then tap Forgot password.": ["Scrivi prima la tua email qui sopra, poi tocca Password dimenticata.", "Scrie întâi emailul mai sus, apoi apasă Ai uitat parola.", "Saisissez d'abord votre e-mail ci-dessus, puis touchez Mot de passe oublié.", "Gib zuerst oben deine E-Mail ein und tippe dann auf Passwort vergessen.", "Escribe primero tu correo arriba y luego toca ¿Olvidaste la contraseña?"],
+      "If that email has an account, a link to set a new password is on its way. Check your inbox.": ["Se esiste un account con questa email, è in arrivo un link per impostare una nuova password. Controlla la posta.", "Dacă există un cont cu acest email, primești un link pentru o parolă nouă. Verifică-ți inboxul.", "Si un compte existe avec cet e-mail, un lien pour choisir un nouveau mot de passe arrive. Vérifiez votre boîte.", "Falls es zu dieser E-Mail ein Konto gibt, ist ein Link für ein neues Passwort unterwegs. Sieh in dein Postfach.", "Si ese correo tiene cuenta, te llegará un enlace para crear una contraseña nueva. Revisa tu bandeja."],
+      "Couldn't send the email. Check the address and your connection, then try again.": ["Impossibile inviare l'email. Controlla l'indirizzo e la connessione, poi riprova.", "Emailul nu s-a putut trimite. Verifică adresa și conexiunea, apoi încearcă din nou.", "Impossible d'envoyer l'e-mail. Vérifiez l'adresse et la connexion, puis réessayez.", "Die E-Mail konnte nicht gesendet werden. Prüf Adresse und Verbindung und versuch es erneut.", "No se pudo enviar el correo. Revisa la dirección y tu conexión y vuelve a intentarlo."],
+      "You were logged out of sync. Log in again to keep syncing.": ["Sei stato disconnesso dalla sincronizzazione. Accedi di nuovo per continuare.", "Ai fost deconectat de la sincronizare. Conectează-te din nou ca să continui.", "Vous avez été déconnecté de la synchronisation. Reconnectez-vous pour continuer.", "Du wurdest von der Synchronisierung abgemeldet. Melde dich erneut an, um weiter zu synchronisieren.", "Se cerró tu sesión de sincronización. Vuelve a entrar para seguir sincronizando."],
+
+      // ---- vacation ----
+      "Vacation": ["Vacanza", "Vacanță", "Vacances", "Urlaub", "Vacaciones"],
+      "Pick the days you're away. Streaks can't break and no reminders go out during them. You can still add tasks and check them off. A weekly task is covered for any week a vacation touches.": ["Scegli i giorni in cui sei via. Le serie non si interrompono e non arrivano promemoria. Puoi comunque aggiungere e spuntare attività. Un'attività settimanale è coperta per ogni settimana toccata dalla vacanza.", "Alege zilele în care ești plecat. Seriile nu se rup și nu primești mementouri. Poți totuși adăuga și bifa sarcini. O sarcină săptămânală e acoperită în orice săptămână atinsă de vacanță.", "Choisissez les jours d'absence. Les séries ne peuvent pas se rompre et aucun rappel n'est envoyé. Vous pouvez quand même ajouter et cocher des tâches. Une tâche hebdomadaire est couverte pour toute semaine touchée par les vacances.", "Wähl die Tage, an denen du weg bist. Serien können nicht reißen und es kommen keine Erinnerungen. Aufgaben hinzufügen und abhaken geht trotzdem. Eine wöchentliche Aufgabe ist für jede Woche abgedeckt, die der Urlaub berührt.", "Elige los días que estarás fuera. Las rachas no se rompen y no llegan recordatorios. Puedes seguir añadiendo y marcando tareas. Una tarea semanal queda cubierta en cualquier semana que toquen las vacaciones."],
+      "On vacation until {1}. Streaks are safe and reminders are paused.": ["In vacanza fino a {1}. Le serie sono al sicuro e i promemoria sono in pausa.", "În vacanță până pe {1}. Seriile sunt în siguranță și mementourile sunt oprite.", "En vacances jusqu'au {1}. Vos séries sont protégées et les rappels en pause.", "Im Urlaub bis {1}. Serien sind sicher und Erinnerungen pausiert.", "De vacaciones hasta el {1}. Tus rachas están a salvo y los recordatorios en pausa."],
+      "Over": ["Finita", "Încheiată", "Terminées", "Vorbei", "Terminadas"],
+      "Upcoming": ["In arrivo", "Urmează", "À venir", "Geplant", "Próximas"],
+      "Remove": ["Rimuovi", "Elimină", "Retirer", "Entfernen", "Quitar"],
+      "Remove vacation {1}": ["Rimuovi vacanza {1}", "Elimină vacanța {1}", "Retirer les vacances {1}", "Urlaub {1} entfernen", "Quitar vacaciones {1}"],
+      "Remove this vacation? Missed days in it count again.": ["Rimuovere questa vacanza? I giorni saltati torneranno a contare.", "Elimini vacanța? Zilele ratate din ea contează din nou.", "Retirer ces vacances ? Les jours manqués comptent à nouveau.", "Diesen Urlaub entfernen? Verpasste Tage darin zählen dann wieder.", "¿Quitar estas vacaciones? Los días perdidos vuelven a contar."],
+      "Yes, remove": ["Sì, rimuovi", "Da, elimină", "Oui, retirer", "Ja, entfernen", "Sí, quitar"],
+      "Vacation removed": ["Vacanza rimossa", "Vacanță eliminată", "Vacances retirées", "Urlaub entfernt", "Vacaciones quitadas"],
+      "From": ["Dal", "De la", "Du", "Von", "Desde"],
+      "To (included)": ["Al (incluso)", "Până la (inclusiv)", "Au (inclus)", "Bis (einschließlich)", "Hasta (incluido)"],
+      "Add vacation": ["Aggiungi vacanza", "Adaugă vacanța", "Ajouter des vacances", "Urlaub hinzufügen", "Añadir vacaciones"],
+      "Pick the first and last day of your vacation.": ["Scegli il primo e l'ultimo giorno di vacanza.", "Alege prima și ultima zi de vacanță.", "Choisissez le premier et le dernier jour de vacances.", "Wähl den ersten und letzten Urlaubstag.", "Elige el primer y el último día de vacaciones."],
+      "The last day needs to be on or after the first day.": ["L'ultimo giorno deve essere uguale o successivo al primo.", "Ultima zi trebuie să fie aceeași cu prima sau după ea.", "Le dernier jour doit être le même que le premier ou après.", "Der letzte Tag muss am oder nach dem ersten liegen.", "El último día debe ser igual o posterior al primero."],
+      "Vacation added. Streaks are safe for those days.": ["Vacanza aggiunta. Le serie sono al sicuro in quei giorni.", "Vacanță adăugată. Seriile sunt în siguranță în acele zile.", "Vacances ajoutées. Vos séries sont protégées ces jours-là.", "Urlaub hinzugefügt. Deine Serien sind an diesen Tagen sicher.", "Vacaciones añadidas. Tus rachas están a salvo esos días."],
+
+      // ---- backup and data ----
+      "Backup": ["Backup", "Copie de rezervă", "Sauvegarde", "Sicherung", "Copia de seguridad"],
+      "Save a copy of everything: tasks, streaks, coins, schedule and settings. Backups from earlier versions load here too. Loading replaces what is in the app.": ["Salva una copia di tutto: attività, serie, monete, agenda e impostazioni. Qui si caricano anche i backup delle versioni precedenti. Il caricamento sostituisce ciò che c'è nell'app.", "Salvează o copie a tot: sarcini, serii, monede, program și setări. Aici se încarcă și copiile din versiunile mai vechi. Încărcarea înlocuiește ce e în aplicație.", "Enregistrez une copie de tout : tâches, séries, pièces, agenda et réglages. Les sauvegardes des anciennes versions se chargent aussi ici. Le chargement remplace le contenu de l'appli.", "Speichere eine Kopie von allem: Aufgaben, Serien, Münzen, Kalender und Einstellungen. Sicherungen älterer Versionen lassen sich hier auch laden. Laden ersetzt, was in der App ist.", "Guarda una copia de todo: tareas, rachas, monedas, agenda y ajustes. Aquí también se cargan copias de versiones anteriores. Cargar reemplaza lo que hay en la app."],
+      "Save a copy of everything: tasks, streaks, coins, schedule and settings. Backups from earlier versions load here too. Loading replaces what is in the app, and a safety copy of the current data is saved first. The app also keeps a daily copy on its own (last 14 days).": ["Salva una copia di tutto: attività, serie, monete, agenda e impostazioni. Qui si caricano anche i backup delle versioni precedenti. Il caricamento sostituisce ciò che c'è nell'app, ma prima viene salvata una copia di sicurezza. L'app tiene anche una copia giornaliera da sola (ultimi 14 giorni).", "Salvează o copie a tot: sarcini, serii, monede, program și setări. Aici se încarcă și copiile din versiunile mai vechi. Încărcarea înlocuiește ce e în aplicație, dar întâi se salvează o copie de siguranță. Aplicația păstrează singură și o copie zilnică (ultimele 14 zile).", "Enregistrez une copie de tout : tâches, séries, pièces, agenda et réglages. Les sauvegardes des anciennes versions se chargent aussi ici. Le chargement remplace le contenu de l'appli, après une copie de sécurité des données actuelles. L'appli garde aussi une copie quotidienne (14 derniers jours).", "Speichere eine Kopie von allem: Aufgaben, Serien, Münzen, Kalender und Einstellungen. Sicherungen älterer Versionen lassen sich hier auch laden. Laden ersetzt, was in der App ist; vorher wird eine Sicherheitskopie gespeichert. Die App behält außerdem selbst eine tägliche Kopie (letzte 14 Tage).", "Guarda una copia de todo: tareas, rachas, monedas, agenda y ajustes. Aquí también se cargan copias de versiones anteriores. Cargar reemplaza lo que hay en la app, y antes se guarda una copia de seguridad. La app también guarda sola una copia diaria (últimos 14 días)."],
+      "Save backup file": ["Salva file di backup", "Salvează fișierul de rezervă", "Enregistrer la sauvegarde", "Sicherungsdatei speichern", "Guardar archivo de copia"],
+      "Load backup file": ["Carica file di backup", "Încarcă fișierul de rezervă", "Charger une sauvegarde", "Sicherungsdatei laden", "Cargar archivo de copia"],
+      "Open backups folder": ["Apri la cartella dei backup", "Deschide folderul cu copii", "Ouvrir le dossier des sauvegardes", "Sicherungsordner öffnen", "Abrir la carpeta de copias"],
+      "Copy or paste backup text instead": ["Oppure copia o incolla il testo del backup", "Sau copiază ori lipește textul copiei", "Ou copier/coller le texte de la sauvegarde", "Stattdessen Sicherungstext kopieren oder einfügen", "O copia o pega el texto de la copia"],
+      "Backup text": ["Testo del backup", "Textul copiei", "Texte de la sauvegarde", "Sicherungstext", "Texto de la copia"],
+      "Paste backup text here": ["Incolla qui il testo del backup", "Lipește aici textul copiei", "Collez le texte de la sauvegarde ici", "Sicherungstext hier einfügen", "Pega aquí el texto de la copia"],
+      "Copy my backup text": ["Copia il testo del backup", "Copiază textul copiei", "Copier le texte de ma sauvegarde", "Meinen Sicherungstext kopieren", "Copiar el texto de mi copia"],
+      "Load pasted text": ["Carica il testo incollato", "Încarcă textul lipit", "Charger le texte collé", "Eingefügten Text laden", "Cargar el texto pegado"],
+      "Paste your backup text in the box first.": ["Prima incolla il testo del backup nel riquadro.", "Lipește întâi textul copiei în casetă.", "Collez d'abord le texte de la sauvegarde dans la zone.", "Füge zuerst deinen Sicherungstext ins Feld ein.", "Pega primero el texto de la copia en el cuadro."],
+      "Load this backup? It has {1} {2} and {3} {4}, and it replaces what is here now.": ["Caricare questo backup? Contiene {1} {2} e {3} {4} e sostituisce ciò che c'è ora.", "Încarci această copie? Are {1} {2} și {3} {4} și înlocuiește ce e acum aici.", "Charger cette sauvegarde ? Elle contient {1} {2} et {3} {4} et remplace le contenu actuel.", "Diese Sicherung laden? Sie enthält {1} {2} und {3} {4} und ersetzt, was jetzt hier ist.", "¿Cargar esta copia? Tiene {1} {2} y {3} {4}, y reemplaza lo que hay ahora."],
+      "task": ["attività", "sarcină", "tâche", "Aufgabe", "tarea"],
+      "tasks": ["attività", "sarcini", "tâches", "Aufgaben", "tareas"],
+      "event": ["evento", "eveniment", "événement", "Termin", "evento"],
+      "events": ["eventi", "evenimente", "événements", "Termine", "eventos"],
+      "Yes, load it": ["Sì, caricalo", "Da, încarc-o", "Oui, la charger", "Ja, laden", "Sí, cargarla"],
+      "Backup loaded": ["Backup caricato", "Copie încărcată", "Sauvegarde chargée", "Sicherung geladen", "Copia cargada"],
+      "Backup saved as {1}": ["Backup salvato come {1}", "Copie salvată ca {1}", "Sauvegarde enregistrée sous {1}", "Sicherung gespeichert als {1}", "Copia guardada como {1}"],
+      "Backup text copied": ["Testo del backup copiato", "Textul copiei a fost copiat", "Texte de la sauvegarde copié", "Sicherungstext kopiert", "Texto de la copia copiado"],
+      "Backup text is in the box. Copy it from there.": ["Il testo del backup è nel riquadro. Copialo da lì.", "Textul copiei e în casetă. Copiază-l de acolo.", "Le texte de la sauvegarde est dans la zone. Copiez-le depuis là.", "Der Sicherungstext steht im Feld. Kopier ihn von dort.", "El texto de la copia está en el cuadro. Cópialo desde ahí."],
+      "Couldn't save a file here. Use Copy backup text instead.": ["Impossibile salvare un file qui. Usa la copia del testo.", "Nu se poate salva un fișier aici. Folosește copierea textului.", "Impossible d'enregistrer un fichier ici. Copiez plutôt le texte.", "Hier kann keine Datei gespeichert werden. Kopier stattdessen den Sicherungstext.", "No se puede guardar un archivo aquí. Copia el texto en su lugar."],
+      "I couldn't open that file.": ["Non riesco ad aprire quel file.", "Nu am putut deschide fișierul.", "Impossible d'ouvrir ce fichier.", "Die Datei ließ sich nicht öffnen.", "No pude abrir ese archivo."],
+      "I couldn't read that as a backup. It should be a .json file saved from Task Tracker.": ["Non riesco a leggerlo come backup. Deve essere un file .json salvato da Task Tracker.", "Nu pot citi asta ca o copie. Trebuie să fie un fișier .json salvat din Task Tracker.", "Impossible de lire cette sauvegarde. Il faut un fichier .json enregistré depuis Task Tracker.", "Das konnte ich nicht als Sicherung lesen. Es sollte eine .json-Datei aus Task Tracker sein.", "No pude leerlo como copia. Debe ser un archivo .json guardado desde Task Tracker."],
+      "That doesn't look like a Task Tracker backup. I couldn't find any tasks or schedule in it.": ["Non sembra un backup di Task Tracker. Non contiene attività né agenda.", "Nu pare o copie Task Tracker. N-am găsit sarcini sau program în ea.", "Ce n'est pas une sauvegarde Task Tracker. Aucune tâche ni agenda trouvés.", "Das sieht nicht nach einer Task-Tracker-Sicherung aus. Keine Aufgaben oder Termine gefunden.", "No parece una copia de Task Tracker. No encontré tareas ni agenda."],
+      "Data": ["Dati", "Date", "Données", "Daten", "Datos"],
+      "Your tasks and streaks are saved on this computer.": ["Attività e serie sono salvate su questo computer.", "Sarcinile și seriile sunt salvate pe acest computer.", "Vos tâches et séries sont enregistrées sur cet ordinateur.", "Deine Aufgaben und Serien sind auf diesem Computer gespeichert.", "Tus tareas y rachas se guardan en este ordenador."],
+      "Your tasks and streaks are saved on this device, inside the app. Clearing your browser's site data for it deletes them, so save a backup now and then.": ["Attività e serie sono salvate su questo dispositivo, nell'app. Cancellare i dati del sito nel browser le elimina, quindi fai un backup ogni tanto.", "Sarcinile și seriile sunt salvate pe acest dispozitiv, în aplicație. Ștergerea datelor site-ului din browser le șterge, așa că fă o copie din când în când.", "Vos tâches et séries sont enregistrées sur cet appareil, dans l'appli. Effacer les données du site dans le navigateur les supprime : faites une sauvegarde de temps en temps.", "Deine Aufgaben und Serien sind auf diesem Gerät in der App gespeichert. Wenn du die Websitedaten im Browser löschst, sind sie weg, also sichere ab und zu.", "Tus tareas y rachas se guardan en este dispositivo, dentro de la app. Borrar los datos del sitio en el navegador las elimina, así que haz una copia de vez en cuando."],
+      "Your tasks and streaks are saved to your account.": ["Attività e serie sono salvate nel tuo account.", "Sarcinile și seriile sunt salvate în contul tău.", "Vos tâches et séries sont enregistrées sur votre compte.", "Deine Aufgaben und Serien sind in deinem Konto gespeichert.", "Tus tareas y rachas se guardan en tu cuenta."],
+      "Not saving in this view.": ["In questa vista non si salva.", "Nu se salvează în această vizualizare.", "Rien n'est enregistré ici.", "In dieser Ansicht wird nicht gespeichert.", "Esta vista no guarda."],
+      "Delete all tasks and progress": ["Elimina tutte le attività e i progressi", "Șterge toate sarcinile și progresul", "Supprimer toutes les tâches et la progression", "Alle Aufgaben und Fortschritte löschen", "Eliminar todas las tareas y el progreso"],
+      "Delete all {1} tasks, their streaks and your coins? Your schedule and mascots stay.": ["Eliminare tutte le {1} attività, le loro serie e le tue monete? Agenda e mascotte restano.", "Ștergi toate cele {1} sarcini, seriile lor și monedele? Programul și mascotele rămân.", "Supprimer les {1} tâches, leurs séries et vos pièces ? L'agenda et les mascottes restent.", "Alle {1} Aufgaben, ihre Serien und deine Münzen löschen? Kalender und Maskottchen bleiben.", "¿Eliminar las {1} tareas, sus rachas y tus monedas? Tu agenda y mascotas se quedan."],
+      "Yes, delete tasks and progress": ["Sì, elimina attività e progressi", "Da, șterge sarcinile și progresul", "Oui, supprimer tâches et progression", "Ja, Aufgaben und Fortschritt löschen", "Sí, eliminar tareas y progreso"],
+      "All tasks and progress deleted": ["Tutte le attività e i progressi eliminati", "Toate sarcinile și progresul au fost șterse", "Toutes les tâches et la progression supprimées", "Alle Aufgaben und Fortschritte gelöscht", "Todas las tareas y el progreso eliminados"],
+      "Keep my data": ["Tieni i miei dati", "Păstrează datele", "Garder mes données", "Daten behalten", "Conservar mis datos"],
+      "Couldn't read the saved data, so nothing will be overwritten. Load a backup in Settings.": ["Impossibile leggere i dati salvati, quindi nulla verrà sovrascritto. Carica un backup in Impostazioni.", "Datele salvate nu pot fi citite, așa că nu se suprascrie nimic. Încarcă o copie din Setări.", "Impossible de lire les données : rien ne sera écrasé. Chargez une sauvegarde dans Réglages.", "Die gespeicherten Daten sind nicht lesbar, daher wird nichts überschrieben. Lade eine Sicherung in den Einstellungen.", "No se pudieron leer los datos guardados, así que no se sobrescribe nada. Carga una copia en Ajustes."],
+      "Couldn't read the saved data, so nothing will be overwritten. Check the backups folder.": ["Impossibile leggere i dati salvati, quindi nulla verrà sovrascritto. Controlla la cartella dei backup.", "Datele salvate nu pot fi citite, așa că nu se suprascrie nimic. Verifică folderul cu copii.", "Impossible de lire les données : rien ne sera écrasé. Consultez le dossier des sauvegardes.", "Die gespeicherten Daten sind nicht lesbar, daher wird nichts überschrieben. Sieh im Sicherungsordner nach.", "No se pudieron leer los datos guardados, así que no se sobrescribe nada. Revisa la carpeta de copias."],
+
+      // ---- schedule ----
+      "Today": ["Oggi", "Azi", "Aujourd'hui", "Heute", "Hoy"],
+      "Back to today": ["Torna a oggi", "Înapoi la azi", "Revenir à aujourd'hui", "Zurück zu heute", "Volver a hoy"],
+      "Previous week": ["Settimana precedente", "Săptămâna anterioară", "Semaine précédente", "Vorherige Woche", "Semana anterior"],
+      "Next week": ["Settimana successiva", "Săptămâna următoare", "Semaine suivante", "Nächste Woche", "Semana siguiente"],
+      "Pick a day": ["Scegli un giorno", "Alege o zi", "Choisir un jour", "Tag wählen", "Elige un día"],
+      "Nothing scheduled yet. Add your own below, or start with one of these.": ["Ancora niente in agenda. Aggiungi qualcosa qui sotto o inizia con uno di questi.", "Încă nimic în program. Adaugă ceva mai jos sau începe cu unul dintre acestea.", "Rien de prévu pour l'instant. Ajoutez le vôtre ci-dessous ou commencez par l'un de ceux-ci.", "Noch nichts geplant. Füge unten etwas hinzu oder starte mit einem davon.", "Aún no hay nada en la agenda. Añade lo tuyo abajo o empieza con uno de estos."],
+      "Nothing scheduled this day.": ["Niente in agenda questo giorno.", "Nimic programat în această zi.", "Rien de prévu ce jour-là.", "An diesem Tag nichts geplant.", "Nada programado este día."],
+      "That's everything for today.": ["Per oggi è tutto.", "Asta e tot pentru azi.", "C'est tout pour aujourd'hui.", "Das war alles für heute.", "Eso es todo por hoy."],
+      "Tasks due": ["Attività in scadenza", "Sarcini cu termen", "Tâches à faire", "Fällige Aufgaben", "Tareas que vencen"],
+      "Any time": ["In qualsiasi momento", "Oricând", "N'importe quand", "Jederzeit", "Cuando quieras"],
+      "Breaks": ["Pause", "Pauze", "Pauses", "Pausen", "Pausas"],
+      "Break": ["Pausa", "Pauză", "Pause", "Pause", "Pausa"],
+      "Holidays, exam weeks, a trip. Pick the dates and which repeating events pause.": ["Ferie, settimane d'esame, un viaggio. Scegli le date e quali eventi ricorrenti si fermano.", "Sărbători, sesiune, o călătorie. Alege datele și ce evenimente repetate se opresc.", "Congés, semaines d'examens, un voyage. Choisissez les dates et les événements récurrents à suspendre.", "Ferien, Prüfungswochen, eine Reise. Wähl die Daten und welche wiederkehrenden Termine pausieren.", "Festivos, semanas de exámenes, un viaje. Elige las fechas y qué eventos repetidos se pausan."],
+      "Add a break": ["Aggiungi una pausa", "Adaugă o pauză", "Ajouter une pause", "Pause hinzufügen", "Añadir una pausa"],
+      "Add to schedule": ["Aggiungi all'agenda", "Adaugă în program", "Ajouter à l'agenda", "Zum Kalender hinzufügen", "Añadir a la agenda"],
+      "Added to your schedule": ["Aggiunto all'agenda", "Adăugat în program", "Ajouté à votre agenda", "Zum Kalender hinzugefügt", "Añadido a tu agenda"],
+      "On break": ["In pausa", "În pauză", "En pause", "Pausiert", "En pausa"],
+      "On break: {1}": ["In pausa: {1}", "În pauză: {1}", "En pause : {1}", "Pausiert: {1}", "En pausa: {1}"],
+      "Skipped today": ["Saltato oggi", "Sărit azi", "Sauté aujourd'hui", "Heute ausgelassen", "Omitido hoy"],
+      "Overlaps": ["Si sovrappone", "Se suprapune", "Chevauchement", "Überschneidung", "Se solapa"],
+      "Not saving in this view. Open the page signed in to keep your schedule.": ["In questa vista non si salva. Apri la pagina con l'accesso per conservare l'agenda.", "Nu se salvează în această vizualizare. Deschide pagina autentificat ca să-ți păstrezi programul.", "Rien n'est enregistré ici. Ouvrez la page en étant connecté pour garder votre agenda.", "In dieser Ansicht wird nicht gespeichert. Öffne die Seite angemeldet, um deinen Kalender zu behalten.", "Esta vista no guarda. Abre la página con tu sesión iniciada para conservar tu agenda."],
+      "Every day": ["Ogni giorno", "În fiecare zi", "Tous les jours", "Jeden Tag", "Todos los días"],
+      "Weekdays": ["Giorni feriali", "Zile lucrătoare", "En semaine", "Werktags", "Entre semana"],
+      "1 event": ["1 evento", "1 eveniment", "1 événement", "1 Termin", "1 evento"],
+      "{1} events": ["{1} eventi", "{1} evenimente", "{1} événements", "{1} Termine", "{1} eventos"],
+      "{1}, 1 event": ["{1}, 1 evento", "{1}, 1 eveniment", "{1}, 1 événement", "{1}, 1 Termin", "{1}, 1 evento"],
+      "{1}, {2} events": ["{1}, {2} eventi", "{1}, {2} evenimente", "{1}, {2} événements", "{1}, {2} Termine", "{1}, {2} eventos"],
+      "{1} · All repeating events": ["{1} · Tutti gli eventi ricorrenti", "{1} · Toate evenimentele repetate", "{1} · Tous les événements récurrents", "{1} · Alle wiederkehrenden Termine", "{1} · Todos los eventos repetidos"],
+      "{1} · 1 event": ["{1} · 1 evento", "{1} · 1 eveniment", "{1} · 1 événement", "{1} · 1 Termin", "{1} · 1 evento"],
+      "{1} · {2} events": ["{1} · {2} eventi", "{1} · {2} evenimente", "{1} · {2} événements", "{1} · {2} Termine", "{1} · {2} eventos"],
+      "{1} · week {2} of {3}": ["{1} · settimana {2} di {3}", "{1} · săptămâna {2} din {3}", "{1} · semaine {2} sur {3}", "{1} · Woche {2} von {3}", "{1} · semana {2} de {3}"],
+      "Now: {1}, until {2}. Next: {3} at {4}.": ["Ora: {1}, fino alle {2}. Dopo: {3} alle {4}.", "Acum: {1}, până la {2}. Urmează: {3} la {4}.", "En cours : {1}, jusqu'à {2}. Ensuite : {3} à {4}.", "Jetzt: {1}, bis {2}. Danach: {3} um {4}.", "Ahora: {1}, hasta las {2}. Después: {3} a las {4}."],
+      "Now: {1}, until {2}.": ["Ora: {1}, fino alle {2}.", "Acum: {1}, până la {2}.", "En cours : {1}, jusqu'à {2}.", "Jetzt: {1}, bis {2}.", "Ahora: {1}, hasta las {2}."],
+      "Next: {1} at {2}, in {3}.": ["Prossimo: {1} alle {2}, tra {3}.", "Urmează: {1} la {2}, în {3}.", "Ensuite : {1} à {2}, dans {3}.", "Als Nächstes: {1} um {2}, in {3}.", "Siguiente: {1} a las {2}, en {3}."],
+      "Edit event: {1}": ["Modifica evento: {1}", "Editează evenimentul: {1}", "Modifier l'événement : {1}", "Termin bearbeiten: {1}", "Editar evento: {1}"],
+      "Edit break: {1}": ["Modifica pausa: {1}", "Editează pauza: {1}", "Modifier la pause : {1}", "Pause bearbeiten: {1}", "Editar pausa: {1}"],
+
+      // ---- event sheet ----
+      "New event": ["Nuovo evento", "Eveniment nou", "Nouvel événement", "Neuer Termin", "Nuevo evento"],
+      "Edit event": ["Modifica evento", "Editează evenimentul", "Modifier l'événement", "Termin bearbeiten", "Editar evento"],
+      "Event name": ["Nome dell'evento", "Numele evenimentului", "Nom de l'événement", "Name des Termins", "Nombre del evento"],
+      "Every week": ["Ogni settimana", "În fiecare săptămână", "Chaque semaine", "Jede Woche", "Cada semana"],
+      "On these days": ["In questi giorni", "În aceste zile", "Ces jours-là", "An diesen Tagen", "Estos días"],
+      "Days of the week": ["Giorni della settimana", "Zilele săptămânii", "Jours de la semaine", "Wochentage", "Días de la semana"],
+      "Starts on": ["Inizia il", "Începe pe", "Commence le", "Beginnt am", "Empieza el"],
+      "Number of weeks": ["Numero di settimane", "Număr de săptămâni", "Nombre de semaines", "Anzahl Wochen", "Número de semanas"],
+      "Date": ["Data", "Data", "Date", "Datum", "Fecha"],
+      "Starts": ["Inizio", "Începe", "Début", "Beginn", "Empieza"],
+      "Ends": ["Fine", "Se termină", "Fin", "Ende", "Termina"],
+      "Place (optional)": ["Luogo (facoltativo)", "Loc (opțional)", "Lieu (facultatif)", "Ort (optional)", "Lugar (opcional)"],
+      "Reminder": ["Promemoria", "Memento", "Rappel", "Erinnerung", "Recordatorio"],
+      "No reminder": ["Nessun promemoria", "Fără memento", "Pas de rappel", "Keine Erinnerung", "Sin recordatorio"],
+      "When it starts": ["All'inizio", "Când începe", "Au début", "Zu Beginn", "Al empezar"],
+      "10 minutes before": ["10 minuti prima", "Cu 10 minute înainte", "10 minutes avant", "10 Minuten vorher", "10 minutos antes"],
+      "30 minutes before": ["30 minuti prima", "Cu 30 de minute înainte", "30 minutes avant", "30 Minuten vorher", "30 minutos antes"],
+      "1 hour before": ["1 ora prima", "Cu o oră înainte", "1 heure avant", "1 Stunde vorher", "1 hora antes"],
+      "Add event": ["Aggiungi evento", "Adaugă evenimentul", "Ajouter l'événement", "Termin hinzufügen", "Añadir evento"],
+      "Skip this day": ["Salta questo giorno", "Sari peste această zi", "Sauter ce jour", "Diesen Tag auslassen", "Omitir este día"],
+      "Delete event": ["Elimina evento", "Șterge evenimentul", "Supprimer l'événement", "Termin löschen", "Eliminar evento"],
+      "No end date. Leave the weeks empty to keep it repeating.": ["Nessuna data di fine. Lascia vuote le settimane per ripeterlo sempre.", "Fără dată de final. Lasă săptămânile goale ca să se repete mereu.", "Pas de date de fin. Laissez les semaines vides pour le répéter sans fin.", "Kein Enddatum. Lass die Wochen leer, damit es sich weiter wiederholt.", "Sin fecha de fin. Deja las semanas vacías para que se repita siempre."],
+      "Runs for 1 week, until {1}.": ["Dura 1 settimana, fino a {1}.", "Ține 1 săptămână, până pe {1}.", "Dure 1 semaine, jusqu'au {1}.", "Läuft 1 Woche, bis {1}.", "Dura 1 semana, hasta el {1}."],
+      "Runs for {1} weeks, until {2}.": ["Dura {1} settimane, fino a {2}.", "Ține {1} săptămâni, până pe {2}.", "Dure {1} semaines, jusqu'au {2}.", "Läuft {1} Wochen, bis {2}.", "Dura {1} semanas, hasta el {2}."],
+      "Skip {1} only": ["Salta solo {1}", "Sari doar {1}", "Sauter seulement le {1}", "Nur {1} auslassen", "Omitir solo el {1}"],
+      "Bring back {1}": ["Ripristina {1}", "Readu {1}", "Rétablir le {1}", "{1} wiederherstellen", "Recuperar el {1}"],
+      "{1} is back on": ["{1} è di nuovo attivo", "{1} e din nou activ", "Le {1} est rétabli", "{1} findet wieder statt", "El {1} vuelve a estar activo"],
+      "{1} skipped": ["{1} saltato", "{1} sărit", "{1} sauté", "{1} ausgelassen", "{1} omitido"],
+      "Give the event a name so you can find it later.": ["Dai un nome all'evento per ritrovarlo in seguito.", "Dă un nume evenimentului ca să-l găsești mai târziu.", "Donnez un nom à l'événement pour le retrouver plus tard.", "Gib dem Termin einen Namen, damit du ihn später findest.", "Ponle un nombre al evento para encontrarlo después."],
+      "Pick at least one day.": ["Scegli almeno un giorno.", "Alege cel puțin o zi.", "Choisissez au moins un jour.", "Wähl mindestens einen Tag.", "Elige al menos un día."],
+      "Pick the day the event starts.": ["Scegli il giorno di inizio dell'evento.", "Alege ziua în care începe evenimentul.", "Choisissez le jour où l'événement commence.", "Wähl den Tag, an dem der Termin beginnt.", "Elige el día en que empieza el evento."],
+      "Number of weeks needs to be a whole number from 1 to 52. Leave it empty to repeat with no end.": ["Il numero di settimane deve essere un intero da 1 a 52. Lascialo vuoto per ripetere senza fine.", "Numărul de săptămâni trebuie să fie întreg, de la 1 la 52. Lasă-l gol ca să se repete fără final.", "Le nombre de semaines doit être un entier de 1 à 52. Laissez vide pour répéter sans fin.", "Die Anzahl Wochen muss eine ganze Zahl von 1 bis 52 sein. Leer lassen für endlose Wiederholung.", "El número de semanas debe ser un entero de 1 a 52. Déjalo vacío para repetir sin fin."],
+      "Pick a date.": ["Scegli una data.", "Alege o dată.", "Choisissez une date.", "Wähl ein Datum.", "Elige una fecha."],
+      "Pick a start and an end time.": ["Scegli un orario di inizio e di fine.", "Alege ora de început și de final.", "Choisissez une heure de début et de fin.", "Wähl eine Start- und Endzeit.", "Elige una hora de inicio y de fin."],
+      "The end needs to be after the start. Events can't run past midnight yet.": ["La fine deve essere dopo l'inizio. Per ora gli eventi non possono superare la mezzanotte.", "Finalul trebuie să fie după început. Deocamdată evenimentele nu pot trece de miezul nopții.", "La fin doit être après le début. Les événements ne peuvent pas encore dépasser minuit.", "Das Ende muss nach dem Beginn liegen. Termine können noch nicht über Mitternacht gehen.", "El final debe ser después del inicio. Por ahora los eventos no pueden pasar de medianoche."],
+      "Delete “{1}” from every day?": ["Eliminare “{1}” da tutti i giorni?", "Ștergi „{1}” din toate zilele?", "Supprimer « {1} » de tous les jours ?", "„{1}“ an allen Tagen löschen?", "¿Eliminar “{1}” de todos los días?"],
+      "this event": ["questo evento", "acest eveniment", "cet événement", "diesen Termin", "este evento"],
+      "Event deleted": ["Evento eliminato", "Eveniment șters", "Événement supprimé", "Termin gelöscht", "Evento eliminado"],
+
+      // ---- break sheet ----
+      "New break": ["Nuova pausa", "Pauză nouă", "Nouvelle pause", "Neue Pause", "Nueva pausa"],
+      "Edit break": ["Modifica pausa", "Editează pauza", "Modifier la pause", "Pause bearbeiten", "Editar pausa"],
+      "Name (optional)": ["Nome (facoltativo)", "Nume (opțional)", "Nom (facultatif)", "Name (optional)", "Nombre (opcional)"],
+      "Pauses": ["Mette in pausa", "Pune pe pauză", "Suspend", "Pausiert", "Pausa"],
+      "All repeating events": ["Tutti gli eventi ricorrenti", "Toate evenimentele repetate", "Tous les événements récurrents", "Alle wiederkehrenden Termine", "Todos los eventos repetidos"],
+      "Only some": ["Solo alcuni", "Doar unele", "Seulement certains", "Nur einige", "Solo algunos"],
+      "Which events": ["Quali eventi", "Ce evenimente", "Quels événements", "Welche Termine", "Qué eventos"],
+      "Add break": ["Aggiungi pausa", "Adaugă pauza", "Ajouter la pause", "Pause hinzufügen", "Añadir pausa"],
+      "Delete break": ["Elimina pausa", "Șterge pauza", "Supprimer la pause", "Pause löschen", "Eliminar pausa"],
+      "Pick the first and last day of the break.": ["Scegli il primo e l'ultimo giorno della pausa.", "Alege prima și ultima zi a pauzei.", "Choisissez le premier et le dernier jour de la pause.", "Wähl den ersten und letzten Tag der Pause.", "Elige el primer y el último día de la pausa."],
+      "Pick at least one event, or choose all repeating events.": ["Scegli almeno un evento o tutti gli eventi ricorrenti.", "Alege cel puțin un eveniment sau toate evenimentele repetate.", "Choisissez au moins un événement, ou tous les événements récurrents.", "Wähl mindestens einen Termin oder alle wiederkehrenden Termine.", "Elige al menos un evento o todos los eventos repetidos."],
+      "Break added": ["Pausa aggiunta", "Pauză adăugată", "Pause ajoutée", "Pause hinzugefügt", "Pausa añadida"],
+      "Break deleted": ["Pausa eliminata", "Pauză ștearsă", "Pause supprimée", "Pause gelöscht", "Pausa eliminada"],
+      "Delete “{1}”? Its events will run again.": ["Eliminare “{1}”? I suoi eventi riprenderanno.", "Ștergi „{1}”? Evenimentele ei vor rula din nou.", "Supprimer « {1} » ? Ses événements reprendront.", "„{1}“ löschen? Die Termine finden dann wieder statt.", "¿Eliminar “{1}”? Sus eventos volverán a ocurrir."],
+      "this break": ["questa pausa", "această pauză", "cette pause", "diese Pause", "esta pausa"]
+    };
+    var L = ["it", "ro", "fr", "de", "es"], out = {};
+    L.forEach(function (l, i) { out[l] = {}; Object.keys(T).forEach(function (k) { out[l][k] = T[k][i]; }); });
+    return out;
+  })();
+  /*/I18N*/
+  // Open the app with ?trdebug to list on-screen text that has no translation yet: ttMiss() in the console.
+  if (/[?&]trdebug\b/.test(location.search)) { trMiss = {}; window.ttMiss = function () { return Object.keys(trMiss); }; }
+
   startSynced();
 })();
 </script>

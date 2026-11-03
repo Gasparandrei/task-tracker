@@ -1,7 +1,7 @@
 // Task Tracker service worker: makes the app installable and lets it open offline.
 // build.py fills in the version and the icon list.
 'use strict';
-const CACHE = 'tt-024db6f8f3';
+const CACHE = 'tt-86bf73e2c7';
 const FONTS = 'tt-fonts';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', "icons/apple-touch-icon.png", "icons/badge-96.png", "icons/icon-128.png", "icons/icon-16.png", "icons/icon-192.png", "icons/icon-24.png", "icons/icon-256.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-512.png", "icons/icon-64.png", "icons/maskable-192.png", "icons/maskable-512.png"];
 
