@@ -637,7 +637,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var FB = { key: "AIzaSyCSVI-OdNCY6BMRGP0Mbs179IK01FSrzro", project: "task-tracker-162c6" };
   var SYNC_KEY = "tt-sync";
   var CLOUD = !!(DESK || WEB);
-  var deskInfo = { packaged: true };
+  var deskInfo = { packaged: true }, deskUpd = null;
   var PRIMARIES = [["Teal", "#0A8580"], ["Blue", "#2457D6"], ["Purple", "#6B46C1"], ["Green", "#2B7A3D"], ["Slate", "#37475A"], ["Orange", "#B85C0E"]];
   var SECONDARIES = [["Red", "#D9383F"], ["Orange", "#E8710A"], ["Pink", "#D6409F"], ["Blue", "#2F7BEA"], ["Purple", "#8B5CF6"], ["Yellow", "#F5B800"]];
   var CAT_HINTS = ["Study", "Training", "Health", "Work", "Home", "Money"];
@@ -1857,7 +1857,22 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     }
     c.appendChild(el("p", "muted", "Reminders and pop-ups only appear while the app is running, so keep it in the tray. Quit it from the tray icon."));
     if (deskInfo && deskInfo.packaged === false) c.appendChild(el("p", "muted", "Start on boot only works in the installed version of the app."));
+    if (deskUpd && deskUpd.on) {
+      c.appendChild(el("p", "muted", updText(deskUpd)));
+      var ur = el("div", "row"), ub = el("button", deskUpd.pending ? "btn" : "btn ghost", deskUpd.pending ? "Update now" : "Check for updates");
+      ub.type = "button"; ub.id = "updBtn"; ub.disabled = deskUpd.state === "checking";
+      ub.addEventListener("click", function () { focusSel = "#updBtn"; if (deskUpd.pending) DESK.updateApply(); else DESK.updateCheck(); });
+      ur.appendChild(ub); c.appendChild(ur);
+    }
     return c;
+  }
+  // Updates arrive from GitHub by themselves; this only shows how that's going.
+  function updText(u) {
+    if (u.pending) return "An update is ready. It applies by itself when you close the window.";
+    if (u.state === "checking") return "Checking for updates…";
+    if (u.state === "error") return "Couldn't check for updates. It tries again by itself every hour.";
+    if (u.state === "installer") return "A bigger update is out. Install the new version to get it.";
+    return "Version from " + new Date(u.built * 1000).toLocaleDateString(LOC, { day: "numeric", month: "long", year: "numeric" }) + ". Updates by itself.";
   }
 
   function backupText() { return JSON.stringify({ app: "Task Tracker", version: 5, exported: new Date().toISOString(), data: state }, null, 2); }
@@ -2813,6 +2828,10 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   async function startDesktop() {
     try {
       try { deskInfo = (await DESK.info()) || deskInfo; } catch (e) {}
+      try {
+        DESK.onUpdate(function (u) { deskUpd = u; if (view === "settings" && !typing()) render(); });
+        deskUpd = await DESK.updateInfo();
+      } catch (e) {}
       var raw = await DESK.load();
       if (raw) {
         var parsed = null;
@@ -3132,6 +3151,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var PATTERNS = [
     // tasks
     [/^Hi, (.+)$/, "Hi, {1}"],
+    [/^Version from (.+)\. Updates by itself\.$/, "Version from {1}. Updates by itself."],
     [/^(\d+) of (\d+) done$/, "{1} of {2} done"],
     [/^Overdue by (\d+) days$/, "Overdue by {1} days"],
     [/^Overdue since (\d\d:\d\d)$/, "Overdue since {1}"],
@@ -3528,6 +3548,13 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       "See-through background (your desktop shows behind the app)": ["Sfondo trasparente (si vede il desktop dietro l'app)", "Fundal transparent (desktopul se vede în spatele aplicației)", "Fond transparent (le bureau se voit derrière l'appli)", "Durchsichtiger Hintergrund (der Desktop scheint durch)", "Fondo transparente (se ve el escritorio detrás de la app)"],
       "How see-through: {1}%": ["Trasparenza: {1}%", "Transparență: {1}%", "Transparence : {1} %", "Durchsichtigkeit: {1} %", "Transparencia: {1} %"],
       "Reminders and pop-ups only appear while the app is running, so keep it in the tray. Quit it from the tray icon.": ["Promemoria e avvisi compaiono solo con l'app in esecuzione, quindi tienila nell'area di notifica. Chiudila dall'icona lì.", "Mementourile și ferestrele apar doar cât aplicația rulează, așa că ține-o în bara de sistem. Închide-o din pictograma de acolo.", "Les rappels n'apparaissent que si l'appli tourne : gardez-la dans la zone de notification. Quittez-la depuis son icône.", "Erinnerungen erscheinen nur, solange die App läuft. Lass sie also im Infobereich. Beenden über das Symbol dort.", "Los recordatorios solo aparecen con la app abierta, así que déjala en la bandeja. Ciérrala desde su icono."],
+      "Version from {1}. Updates by itself.": ["Versione del {1}. Si aggiorna da sola.", "Versiune din {1}. Se actualizează singură.", "Version du {1}. Se met à jour toute seule.", "Version vom {1}. Aktualisiert sich von selbst.", "Versión del {1}. Se actualiza sola."],
+      "An update is ready. It applies by itself when you close the window.": ["È pronto un aggiornamento. Si applica da solo quando chiudi la finestra.", "O actualizare este gata. Se aplică singură când închizi fereastra.", "Une mise à jour est prête. Elle s'applique toute seule quand vous fermez la fenêtre.", "Ein Update ist bereit. Es wird automatisch angewendet, wenn du das Fenster schließt.", "Hay una actualización lista. Se aplica sola al cerrar la ventana."],
+      "Checking for updates…": ["Controllo aggiornamenti…", "Se caută actualizări…", "Recherche de mises à jour…", "Suche nach Updates…", "Buscando actualizaciones…"],
+      "Couldn't check for updates. It tries again by itself every hour.": ["Impossibile controllare gli aggiornamenti. Riprova da sola ogni ora.", "Nu am putut căuta actualizări. Reîncearcă singură în fiecare oră.", "Impossible de chercher les mises à jour. Nouvel essai automatique toutes les heures.", "Updates konnten nicht geprüft werden. Es wird jede Stunde automatisch erneut versucht.", "No se pudieron buscar actualizaciones. Lo reintenta sola cada hora."],
+      "A bigger update is out. Install the new version to get it.": ["È uscito un aggiornamento più grande. Installa la nuova versione per averlo.", "A apărut o actualizare mai mare. Instalează noua versiune ca să o ai.", "Une mise à jour plus importante est sortie. Installez la nouvelle version pour l'obtenir.", "Ein größeres Update ist da. Installiere die neue Version, um es zu bekommen.", "Hay una actualización mayor. Instala la nueva versión para tenerla."],
+      "Update now": ["Aggiorna ora", "Actualizează acum", "Mettre à jour", "Jetzt aktualisieren", "Actualizar ahora"],
+      "Check for updates": ["Controlla aggiornamenti", "Caută actualizări", "Chercher des mises à jour", "Nach Updates suchen", "Buscar actualizaciones"],
       "Start on boot only works in the installed version of the app.": ["L'avvio automatico funziona solo nella versione installata.", "Pornirea automată merge doar în versiunea instalată.", "Le lancement au démarrage ne marche que dans la version installée.", "Autostart funktioniert nur in der installierten Version.", "El inicio automático solo funciona en la versión instalada."],
 
       // ---- install ----
