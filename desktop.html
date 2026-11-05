@@ -95,9 +95,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .sync-stat { font-weight: 700; margin: 0; }
 .sync-msg { margin: 0; font-size: .9rem; font-weight: 600; }
 .people { list-style: none; margin: 0; padding: 0; }
-.people li { padding: 10px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-.people strong { display: block; }
-.chip-rm { background: transparent; border-style: dashed; color: var(--muted); }
+.people li { padding: 10px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }.chip-rm { background: transparent; border-style: dashed; color: var(--muted); }
 .chip-rm:hover { color: var(--fg); border-color: var(--line-strong); }
 
 .group { display: flex; flex-direction: column; gap: 10px; }
@@ -2984,7 +2982,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     });
     if (r.ok) { sync.seen = key; syncKeep(); }
   }
-  var people = { uid: null, list: null, busy: false };
+  var people = { uid: null, list: null, busy: false, at: 0 };
   async function loadPeople() {
     if (people.busy || !sync.uid) return;
     var uid = sync.uid, list = [], page = "";
@@ -2996,11 +2994,15 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         var j = await r.json();
         (j.documents || []).forEach(function (d) {
           var f = d.fields || {};
-          list.push({ name: f.name && f.name.stringValue || "", email: f.email && f.email.stringValue || "", seen: f.seen && f.seen.timestampValue || "" });
+          list.push({ name: f.name && f.name.stringValue || "" });
         });
         page = j.nextPageToken || "";
       } while (page);
-      if (list && sync.uid === uid) { people.list = list.sort(function (a, b) { return a.seen < b.seen ? 1 : -1; }); if (view === "settings" && !typing()) render(); }
+      if (list && sync.uid === uid) {
+        people.at = Date.now();
+        people.list = list.sort(function (a, b) { return !a.name - !b.name || a.name.localeCompare(b.name, LOC, { sensitivity: "base" }); });
+        if (view === "settings" && !typing()) render();
+      }
     } catch (e) {}
     people.busy = false;
   }
@@ -3008,21 +3010,14 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     if (!sync.uid) return null;
     if (people.uid !== sync.uid) { people.list = null; loadPeople(); return null; }
     if (!people.list) return null;
-    var c = el("section", "card"), n = people.list.length;
-    c.appendChild(el("h2", "", "People"));
-    c.appendChild(el("p", "sync-stat", n === 1 ? "1 person signed in" : n + " people signed in"));
+    if (Date.now() - people.at > 60000) loadPeople();
+    var c = el("section", "card");
+    c.appendChild(el("h2", "", "People (" + people.list.length + ")"));
     var ul = el("ul", "people");
     people.list.forEach(function (p) {
-      var li = el("li");
-      li.appendChild(p.name ? own(el("strong", "", p.name)) : el("strong", "", "No name yet"));
-      li.appendChild(own(el("span", "muted", p.email)));
-      if (p.seen) li.appendChild(el("div", "muted", "Last seen " + new Date(p.seen).toLocaleDateString(LOC, { day: "numeric", month: "short", year: "numeric" })));
-      ul.appendChild(li);
+      ul.appendChild(p.name ? own(el("li", "", p.name)) : el("li", "muted", "No name"));
     });
     c.appendChild(ul);
-    var r = el("div", "row"), b = el("button", "btn ghost", "Refresh list"); b.type = "button";
-    b.addEventListener("click", function () { loadPeople(); });
-    r.appendChild(b); c.appendChild(r);
     return c;
   }
 
@@ -3209,8 +3204,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var PATTERNS = [
     // tasks
     [/^Hi, (.+)$/, "Hi, {1}"],
-    [/^(\d+) people signed in$/, "{1} people signed in"],
-    [/^Last seen (.+)$/, "Last seen {1}"],
+    [/^People \((\d+)\)$/, "People ({1})"],
     [/^Version from (.+)\. Updates by itself\.$/, "Version from {1}. Updates by itself."],
     [/^(\d+) of (\d+) done$/, "{1} of {2} done"],
     [/^Overdue by (\d+) days$/, "Overdue by {1} days"],
@@ -3614,12 +3608,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       "Couldn't check for updates. It tries again by itself every hour.": ["Impossibile controllare gli aggiornamenti. Riprova da sola ogni ora.", "Nu am putut căuta actualizări. Reîncearcă singură în fiecare oră.", "Impossible de chercher les mises à jour. Nouvel essai automatique toutes les heures.", "Updates konnten nicht geprüft werden. Es wird jede Stunde automatisch erneut versucht.", "No se pudieron buscar actualizaciones. Lo reintenta sola cada hora."],
       "A bigger update is out. Install the new version to get it.": ["È uscito un aggiornamento più grande. Installa la nuova versione per averlo.", "A apărut o actualizare mai mare. Instalează noua versiune ca să o ai.", "Une mise à jour plus importante est sortie. Installez la nouvelle version pour l'obtenir.", "Ein größeres Update ist da. Installiere die neue Version, um es zu bekommen.", "Hay una actualización mayor. Instala la nueva versión para tenerla."],
       "The app's owner can see your name, your email and when you last used the app. Not your tasks.": ["Il proprietario dell'app può vedere il tuo nome, la tua email e quando hai usato l'app l'ultima volta. Non le tue attività.", "Proprietarul aplicației îți poate vedea numele, emailul și când ai folosit ultima dată aplicația. Nu și sarcinile.", "Le propriétaire de l'app peut voir votre nom, votre e-mail et votre dernière utilisation. Pas vos tâches.", "Der Besitzer der App kann deinen Namen, deine E-Mail und deine letzte Nutzung sehen. Nicht deine Aufgaben.", "El propietario de la app puede ver tu nombre, tu correo y cuándo usaste la app por última vez. No tus tareas."],
-      "People": ["Persone", "Persoane", "Personnes", "Personen", "Personas"],
-      "1 person signed in": ["1 persona registrata", "1 persoană conectată", "1 personne connectée", "1 Person angemeldet", "1 persona conectada"],
-      "{1} people signed in": ["{1} persone registrate", "{1} persoane conectate", "{1} personnes connectées", "{1} Personen angemeldet", "{1} personas conectadas"],
-      "No name yet": ["Ancora senza nome", "Încă fără nume", "Pas encore de nom", "Noch kein Name", "Aún sin nombre"],
-      "Last seen {1}": ["Ultimo accesso: {1}", "Văzut ultima dată: {1}", "Dernière visite : {1}", "Zuletzt gesehen: {1}", "Última vez: {1}"],
-      "Refresh list": ["Aggiorna elenco", "Reîmprospătează lista", "Actualiser la liste", "Liste aktualisieren", "Actualizar lista"],
+      "No name": ["Senza nome", "Fără nume", "Sans nom", "Kein Name", "Sin nombre"],
+      "People ({1})": ["Persone ({1})", "Persoane ({1})", "Personnes ({1})", "Personen ({1})", "Personas ({1})"],
       "Update now": ["Aggiorna ora", "Actualizează acum", "Mettre à jour", "Jetzt aktualisieren", "Actualizar ahora"],
       "Check for updates": ["Controlla aggiornamenti", "Caută actualizări", "Chercher des mises à jour", "Nach Updates suchen", "Buscar actualizaciones"],
       "Start on boot only works in the installed version of the app.": ["L'avvio automatico funziona solo nella versione installata.", "Pornirea automată merge doar în versiunea instalată.", "Le lancement au démarrage ne marche que dans la version installée.", "Autostart funktioniert nur in der installierten Version.", "El inicio automático solo funciona en la versión instalada."],
