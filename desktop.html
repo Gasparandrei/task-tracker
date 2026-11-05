@@ -101,12 +101,16 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .group { display: flex; flex-direction: column; gap: 10px; }
 .group-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-inline: 4px; }
 .group-head h2 { font-size: 1.5rem; line-height: 1.1; letter-spacing: .02em; }
-.folder { display: flex; flex-direction: column; gap: 10px; }
-.folder-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 16px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 16px; font: inherit; font-weight: 700; text-align: start; cursor: pointer; }
-.folder-head:hover { border-color: var(--line-strong); }
-.folder-head svg { width: 18px; height: 18px; flex: none; transition: transform .15s ease; }
-.folder-head[aria-expanded="true"] svg { transform: rotate(90deg); }
-.folder-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hid-box { display: flex; flex-direction: column; gap: 10px; }
+.hid-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 16px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 16px; font: inherit; font-weight: 700; text-align: start; cursor: pointer; }
+.hid-head:hover { border-color: var(--line-strong); }
+.hid-head svg { width: 18px; height: 18px; flex: none; transition: transform .15s ease; }
+.hid-head[aria-expanded="true"] svg { transform: rotate(90deg); }
+.hid-name { flex: 1; min-width: 0; }
+.tags .hide { margin: -6px 0 -6px auto; width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0; }
+.tags .hide:hover { color: var(--fg); background: var(--surface-2); }
+.tags .hide svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tags .hide + .del { margin-left: 0; }
 ul.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 li.task { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); padding: 12px 16px 12px 12px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; }
 li.task.done { border-color: var(--done); }
@@ -492,12 +496,6 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       <input type="text" id="fCat" maxlength="24" list="catList" autocomplete="off">
       <datalist id="catList"></datalist>
     </div>
-    <div class="field" id="folderWrap" hidden>
-      <label for="fFolder">Folder (optional)</label>
-      <input type="text" id="fFolder" maxlength="24" list="folderList" autocomplete="off">
-      <datalist id="folderList"></datalist>
-      <p class="muted f-hint">Folders stay closed on the Tasks screen. A task comes back out 2 days before it's due.</p>
-    </div>
     <div class="field">
       <label for="fDesc">Description (optional)</label>
       <textarea id="fDesc" maxlength="300" rows="3"></textarea>
@@ -663,6 +661,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var SNOW = '<svg class="snow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M4.2 7l15.6 10M4.2 17L19.8 7"/><path d="M9.5 3.5L12 6l2.5-2.5M9.5 20.5L12 18l2.5 2.5"/></svg>';
   var PENCIL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>';
   var TRASH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  var EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5.2A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.9M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>';
   var CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" pathLength="1"/></svg>';
   var PLUS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
   // Overlays for the streak flame: frost sparkles when a freeze kicks in, a crack and flying shards when the ice breaks.
@@ -856,7 +856,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         else if (t.log && typeof t.log === "object") Object.keys(t.log).forEach(function (k) { var c = Number(t.log[k]); if (c > 0) log[k] = Math.floor(c); });
         var type = t.type === "weekly" || t.freq === "weekly" ? "weekly" : (t.type === "once" ? "once" : "daily");
         if (type !== "once") pool[type] += n0(t.freezes);
-        return { id: String(t.id || newId()), title: t.title, type: type, target: Math.max(1, Math.min(99, Math.floor(Number(t.target) || 1))), cat: typeof t.cat === "string" ? t.cat : "", folder: type === "once" && typeof t.folder === "string" ? t.folder.slice(0, 24) : "", desc: typeof t.desc === "string" ? t.desc.slice(0, 300) : "", due: typeof t.due === "string" ? t.due : null, dueTime: typeof t.dueTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t.dueTime) ? t.dueTime : null, created: t.created || today(), log: log, frozen: cleanFrozen(t.frozen), settled: typeof t.settled === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.settled) ? t.settled : null, autoFreeze: t.autoFreeze !== false, unit: typeof t.unit === "string" ? t.unit.slice(0, 16) : "", goal: Number(t.goal) > 0 && isFinite(Number(t.goal)) ? Math.min(1e6, Number(t.goal)) : null, notes: cleanNotes(t.notes) };
+        return { id: String(t.id || newId()), title: t.title, type: type, target: Math.max(1, Math.min(99, Math.floor(Number(t.target) || 1))), cat: typeof t.cat === "string" ? t.cat : "", hidden: type === "once" && (t.hidden === true || (t.hidden === undefined && typeof t.folder === "string" && t.folder !== "")), desc: typeof t.desc === "string" ? t.desc.slice(0, 300) : "", due: typeof t.due === "string" ? t.due : null, dueTime: typeof t.dueTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t.dueTime) ? t.dueTime : null, created: t.created || today(), log: log, frozen: cleanFrozen(t.frozen), settled: typeof t.settled === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.settled) ? t.settled : null, autoFreeze: t.autoFreeze !== false, unit: typeof t.unit === "string" ? t.unit.slice(0, 16) : "", goal: Number(t.goal) > 0 && isFinite(Number(t.goal)) ? Math.min(1e6, Number(t.goal)) : null, notes: cleanNotes(t.notes) };
       })
     };
   }
@@ -1154,25 +1154,29 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       });
   }
 
-  // One-time tasks filed in a folder stay out of the way until they're within 2 days of their due date.
-  function filed(x) {
-    if (x.t.type !== "once" || !x.t.folder) return false;
-    return x.a.done || !x.t.due || x.t.due > shift(today(), 2);
+  // A one-time task can be hidden while it has no date or is more than 2 days from its due date.
+  // Inside 2 days it comes back out by itself, so a later due date can hide it again.
+  function canHide(t) {
+    return t.type === "once" && (!t.due || t.due > shift(today(), 2));
   }
-  function folderNames() {
-    var names = [];
-    state.tasks.forEach(function (t) { if (t.folder && names.indexOf(t.folder) < 0) names.push(t.folder); });
-    return names.sort(function (a, b) { return a.localeCompare(b, LOC, { sensitivity: "base" }); });
+  function isHidden(x) { return !!x.t.hidden && canHide(x.t); }
+  function setHidden(t, on) {
+    var snap = JSON.stringify(state);
+    t.hidden = on;
+    if (on) { toast(t.due ? "Hidden. It comes back 2 days before it's due." : "Task hidden", snap); focusSel = "#hiddenHead"; }
+    else focusSel = '[data-tick="' + t.id + '"]';
+    changed();
   }
-  var openFolders = {};
-  function folderBox(name, items, i) {
-    var box = el("div", "folder"), open = !!openFolders[name];
-    var b = el("button", "folder-head"); b.type = "button"; b.id = "folder" + i; b.setAttribute("aria-expanded", String(open));
+  var hiddenOpen = false;
+  function hiddenBox(items) {
+    var box = el("div", "hid-box");
+    var b = el("button", "hid-head"); b.type = "button"; b.id = "hiddenHead"; b.setAttribute("aria-expanded", String(hiddenOpen));
     b.innerHTML = CHEV_R;
-    b.appendChild(own(el("span", "folder-name", name)));
+    b.appendChild(el("span", "hid-name", "Hidden"));
     b.appendChild(el("span", "label num", String(items.length)));
-    b.addEventListener("click", function () { openFolders[name] = !open; focusSel = "#" + b.id; render(); });
+    b.addEventListener("click", function () { hiddenOpen = !hiddenOpen; focusSel = "#hiddenHead"; render(); });
     box.appendChild(b);
+    var open = hiddenOpen;
     if (open) {
       var ul = el("ul", "tasks");
       items.forEach(function (x) { ul.appendChild(taskRow(x.t, x.a)); });
@@ -1316,6 +1320,12 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     }
     var isDel = pendingDelete === t.id;
     if (!isDel) {
+      if (canHide(t)) {
+        var hb = el("button", "hide"); hb.type = "button"; hb.innerHTML = t.hidden ? EYE : EYE_OFF;
+        hb.setAttribute("aria-label", (t.hidden ? "Unhide task: " : "Hide task: ") + t.title); hb.title = t.hidden ? "Unhide task" : "Hide task";
+        hb.addEventListener("click", function () { setHidden(t, !t.hidden); });
+        tags.appendChild(hb);
+      }
       var del = el("button", "del"); del.type = "button"; del.innerHTML = TRASH;
       del.setAttribute("data-del", t.id); del.setAttribute("aria-label", "Delete task: " + t.title); del.title = "Delete task";
       del.addEventListener("click", function () { pendingDelete = t.id; focusSel = '[data-keep="' + t.id + '"]'; render(); });
@@ -1567,7 +1577,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     if (mode === "local") v.appendChild(el("div", "banner", "Not saving in this view. Open the page signed in to keep your streaks."));
     var vb = vacBanner(); if (vb) v.appendChild(vb);
     var rows = visibleTasks();
-    var shown = rows.filter(function (x) { return !filed(x); });
+    var shown = rows.filter(function (x) { return !isHidden(x); });
     var active = shown.filter(function (x) { return !(x.t.type === "once" && x.a.done); });
     var left = active.filter(function (x) { return !x.a.done; }).length;
 
@@ -1626,7 +1636,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     [["once", "One time"], ["daily", "Daily"], ["weekly", "Weekly"]].forEach(function (g) {
       var all = rows.filter(function (x) { return x.t.type === g[0]; });
       if (!all.length) return;
-      var items = all.filter(function (x) { return !filed(x); });
+      var items = all.filter(function (x) { return !isHidden(x); });
       var sec = el("section", "group");
       var head = el("div", "group-head");
       head.appendChild(el("h2", "", g[1]));
@@ -1646,10 +1656,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         items.forEach(function (x) { ul.appendChild(taskRow(x.t, x.a)); });
         sec.appendChild(ul);
       }
-      folderNames().forEach(function (name, i) {
-        var inside = all.filter(function (x) { return filed(x) && x.t.folder === name; });
-        if (inside.length) sec.appendChild(folderBox(name, inside, i));
-      });
+      var tucked = all.filter(isHidden);
+      if (tucked.length) sec.appendChild(hiddenBox(tucked));
       v.appendChild(sec);
     });
 
@@ -2448,7 +2456,6 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var t = document.querySelector('input[name="ftype"]:checked').value;
     $("targetWrap").hidden = t === "once";
     $("dueWrap").hidden = t !== "once";
-    $("folderWrap").hidden = t !== "once";
     $("unitWrap").hidden = t === "once";
     $("goalLabel").textContent = (t === "weekly" ? "Weekly" : "Daily") + " goal (optional)";
     $("targetLabel").textContent = t === "weekly" ? "Times per week" : "Times per day";
@@ -2477,9 +2484,6 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     state.tasks.forEach(function (x) { if (x.cat && cats.indexOf(x.cat) < 0) cats.unshift(x.cat); });
     $("catList").innerHTML = "";
     cats.forEach(function (c) { var o = document.createElement("option"); o.value = c; $("catList").appendChild(o); });
-    $("fFolder").value = t ? (t.folder || "") : "";
-    $("folderList").innerHTML = "";
-    folderNames().forEach(function (c) { var o = document.createElement("option"); o.value = c; $("folderList").appendChild(o); });
     $("formErr").textContent = "";
     $("deleteRow").hidden = !t; $("deleteAsk").hidden = true; $("deleteBtn").hidden = false;
     syncType();
@@ -2500,17 +2504,16 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var due = type === "once" ? ($("fDue").value || null) : null;
     var dueTime = due && type === "once" ? ($("fDueTime").value || null) : null;
     var cat = $("fCat").value.trim();
-    var folder = type === "once" ? $("fFolder").value.trim() : "";
     var desc = $("fDesc").value.trim();
     var unit = type === "once" ? "" : $("fUnit").value.trim().slice(0, 16);
     var goal = unit && Number($("fGoal").value) > 0 ? Math.min(1e6, Number($("fGoal").value)) : null;
     if (editingId) {
       var t = state.tasks.filter(function (x) { return x.id === editingId; })[0];
       if (t && t.type !== type) { t.frozen = {}; t.settled = null; }
-      if (t) { t.title = title; t.type = type; t.target = type === "once" ? 1 : target; t.due = due; t.dueTime = dueTime; t.cat = cat; t.folder = folder; t.desc = desc; t.unit = unit; t.goal = goal; }
+      if (t) { t.title = title; t.type = type; t.target = type === "once" ? 1 : target; t.due = due; t.dueTime = dueTime; t.cat = cat; t.desc = desc; t.unit = unit; t.goal = goal; }
       toast("Changes saved");
     } else {
-      state.tasks.push({ id: newId(), title: title, type: type, target: type === "once" ? 1 : target, cat: cat, folder: folder, desc: desc, due: due, dueTime: dueTime, created: today(), log: {}, unit: unit, goal: goal, notes: {} });
+      state.tasks.push({ id: newId(), title: title, type: type, target: type === "once" ? 1 : target, cat: cat, desc: desc, due: due, dueTime: dueTime, created: today(), log: {}, unit: unit, goal: goal, notes: {} });
       toast("Task added");
     }
     closeSheet();
@@ -3289,6 +3292,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     [/^Auto freeze on for “(.+)”$/, "Auto freeze on for “{1}”"],
     [/^Auto freeze off for “(.+)”$/, "Auto freeze off for “{1}”"],
     [/^Delete task: (.+)$/, "Delete task: {1}"],
+    [/^Hide task: (.+)$/, "Hide task: {1}"],
+    [/^Unhide task: (.+)$/, "Unhide task: {1}"],
     [/^Edit today's note: (.+)$/, "Edit today's note: {1}"],
     [/^Add a note for today: (.+)$/, "Add a note for today: {1}"],
     [/^Delete “(.+)” and its streak\?$/, "Delete “{1}” and its streak?", "1"],
@@ -3660,8 +3665,13 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       "Couldn't check for updates. It tries again by itself every hour.": ["Impossibile controllare gli aggiornamenti. Riprova da sola ogni ora.", "Nu am putut căuta actualizări. Reîncearcă singură în fiecare oră.", "Impossible de chercher les mises à jour. Nouvel essai automatique toutes les heures.", "Updates konnten nicht geprüft werden. Es wird jede Stunde automatisch erneut versucht.", "No se pudieron buscar actualizaciones. Lo reintenta sola cada hora."],
       "A bigger update is out. Install the new version to get it.": ["È uscito un aggiornamento più grande. Installa la nuova versione per averlo.", "A apărut o actualizare mai mare. Instalează noua versiune ca să o ai.", "Une mise à jour plus importante est sortie. Installez la nouvelle version pour l'obtenir.", "Ein größeres Update ist da. Installiere die neue Version, um es zu bekommen.", "Hay una actualización mayor. Instala la nueva versión para tenerla."],
       "The app's owner can see your name, your email and when you last used the app. Not your tasks.": ["Il proprietario dell'app può vedere il tuo nome, la tua email e quando hai usato l'app l'ultima volta. Non le tue attività.", "Proprietarul aplicației îți poate vedea numele, emailul și când ai folosit ultima dată aplicația. Nu și sarcinile.", "Le propriétaire de l'app peut voir votre nom, votre e-mail et votre dernière utilisation. Pas vos tâches.", "Der Besitzer der App kann deinen Namen, deine E-Mail und deine letzte Nutzung sehen. Nicht deine Aufgaben.", "El propietario de la app puede ver tu nombre, tu correo y cuándo usaste la app por última vez. No tus tareas."],
-      "Folder (optional)": ["Cartella (facoltativa)", "Dosar (opțional)", "Dossier (facultatif)", "Ordner (optional)", "Carpeta (opcional)"],
-      "Folders stay closed on the Tasks screen. A task comes back out 2 days before it's due.": ["Le cartelle restano chiuse nella schermata Attività. Un'attività torna fuori 2 giorni prima della scadenza.", "Dosarele rămân închise pe ecranul Sarcini. O sarcină iese din nou cu 2 zile înainte de termen.", "Les dossiers restent fermés sur l'écran Tâches. Une tâche en ressort 2 jours avant son échéance.", "Ordner bleiben auf dem Aufgaben-Bildschirm geschlossen. Eine Aufgabe erscheint wieder 2 Tage vor Fälligkeit.", "Las carpetas se quedan cerradas en la pantalla Tareas. Una tarea vuelve a salir 2 días antes de su fecha."],
+      "Hidden": ["Nascoste", "Ascunse", "Masquées", "Ausgeblendet", "Ocultas"],
+      "Hide task": ["Nascondi attività", "Ascunde sarcina", "Masquer la tâche", "Aufgabe ausblenden", "Ocultar tarea"],
+      "Unhide task": ["Mostra attività", "Afișează sarcina", "Afficher la tâche", "Aufgabe einblenden", "Mostrar tarea"],
+      "Hide task: {1}": ["Nascondi attività: {1}", "Ascunde sarcina: {1}", "Masquer la tâche : {1}", "Aufgabe ausblenden: {1}", "Ocultar tarea: {1}"],
+      "Unhide task: {1}": ["Mostra attività: {1}", "Afișează sarcina: {1}", "Afficher la tâche : {1}", "Aufgabe einblenden: {1}", "Mostrar tarea: {1}"],
+      "Task hidden": ["Attività nascosta", "Sarcină ascunsă", "Tâche masquée", "Aufgabe ausgeblendet", "Tarea oculta"],
+      "Hidden. It comes back 2 days before it's due.": ["Nascosta. Torna 2 giorni prima della scadenza.", "Ascunsă. Revine cu 2 zile înainte de termen.", "Masquée. Elle revient 2 jours avant son échéance.", "Ausgeblendet. Sie erscheint wieder 2 Tage vor Fälligkeit.", "Oculta. Vuelve 2 días antes de su fecha."],
       "No name": ["Senza nome", "Fără nume", "Sans nom", "Kein Name", "Sin nombre"],
       "People ({1})": ["Persone ({1})", "Persoane ({1})", "Personnes ({1})", "Personen ({1})", "Personas ({1})"],
       "Update now": ["Aggiorna ora", "Actualizează acum", "Mettre à jour", "Jetzt aktualisieren", "Actualizar ahora"],
