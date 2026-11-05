@@ -97,6 +97,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 .sync-stat { font-weight: 700; margin: 0; }
 .sync-msg { margin: 0; font-size: .9rem; font-weight: 600; }
+.people { list-style: none; margin: 0; padding: 0; }
+.people li { padding: 10px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.people strong { display: block; }
 .chip-rm { background: transparent; border-style: dashed; color: var(--muted); }
 .chip-rm:hover { color: var(--fg); border-color: var(--line-strong); }
 
@@ -636,6 +639,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   // These keys only name the project; the database rules let each account reach nothing but its own data.
   var FB = { key: "AIzaSyCSVI-OdNCY6BMRGP0Mbs179IK01FSrzro", project: "task-tracker-162c6" };
   var SYNC_KEY = "tt-sync";
+  var OWNER_SEES = "The app's owner can see your name, your email and when you last used the app. Not your tasks.";
   var CLOUD = !!(DESK || WEB);
   var deskInfo = { packaged: true }, deskUpd = null;
   var PRIMARIES = [["Teal", "#0A8580"], ["Blue", "#2457D6"], ["Purple", "#6B46C1"], ["Green", "#2B7A3D"], ["Slate", "#37475A"], ["Orange", "#B85C0E"]];
@@ -2094,7 +2098,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     v.appendChild(card);
     if (DESK) v.appendChild(deskCard());
     if (WEB && /^https?:$/.test(location.protocol)) v.appendChild(installCard());
-    if (CLOUD) v.appendChild(syncCard());
+    if (CLOUD) { v.appendChild(syncCard()); var pc = peopleCard(); if (pc) v.appendChild(pc); }
 
     var vc = el("section", "card");
     vc.appendChild(el("h2", "", "Vacation"));
@@ -2892,7 +2896,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
 
   function syncKeep() {
     try {
-      if (sync.uid) localStorage.setItem(SYNC_KEY, JSON.stringify({ uid: sync.uid, email: sync.email, refresh: sync.refresh, base: sync.base }));
+      if (sync.uid) localStorage.setItem(SYNC_KEY, JSON.stringify({ uid: sync.uid, email: sync.email, refresh: sync.refresh, base: sync.base, seen: sync.seen }));
       else localStorage.removeItem(SYNC_KEY);
     } catch (e) {}
   }
@@ -2971,6 +2975,60 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     throw new Error("HTTP " + r.status);
   }
 
+  // Each signed-in account keeps a small profile (name, email, last day seen) for the owner's People list. Tasks stay
+  // private: the database rules let only the owner read profiles, and profiles hold nothing else.
+  function profilesUrl() { return "https://firestore.googleapis.com/v1/projects/" + FB.project + "/databases/(default)/documents/profiles"; }
+  async function pushProfile() {
+    var name = String(state.settings.name || "").slice(0, 40), key = today() + "|" + name + "|" + sync.email;
+    if (sync.seen === key) return;
+    var r = await fetch(profilesUrl() + "/" + sync.uid, {
+      method: "PATCH", headers: { Authorization: "Bearer " + (await fbToken()), "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { name: { stringValue: name }, email: { stringValue: sync.email }, seen: { timestampValue: new Date().toISOString() } } })
+    });
+    if (r.ok) { sync.seen = key; syncKeep(); }
+  }
+  var people = { uid: null, list: null, busy: false };
+  async function loadPeople() {
+    if (people.busy || !sync.uid) return;
+    var uid = sync.uid, list = [], page = "";
+    people.uid = uid; people.busy = true;
+    try {
+      do {
+        var r = await fetch(profilesUrl() + "?pageSize=300" + (page ? "&pageToken=" + encodeURIComponent(page) : ""), { headers: { Authorization: "Bearer " + (await fbToken()) } });
+        if (!r.ok) { list = people.list; break; } // the rules refuse everyone but the owner, who alone gets the card
+        var j = await r.json();
+        (j.documents || []).forEach(function (d) {
+          var f = d.fields || {};
+          list.push({ name: f.name && f.name.stringValue || "", email: f.email && f.email.stringValue || "", seen: f.seen && f.seen.timestampValue || "" });
+        });
+        page = j.nextPageToken || "";
+      } while (page);
+      if (list && sync.uid === uid) { people.list = list.sort(function (a, b) { return a.seen < b.seen ? 1 : -1; }); if (view === "settings" && !typing()) render(); }
+    } catch (e) {}
+    people.busy = false;
+  }
+  function peopleCard() {
+    if (!sync.uid) return null;
+    if (people.uid !== sync.uid) { people.list = null; loadPeople(); return null; }
+    if (!people.list) return null;
+    var c = el("section", "card"), n = people.list.length;
+    c.appendChild(el("h2", "", "People"));
+    c.appendChild(el("p", "sync-stat", n === 1 ? "1 person signed in" : n + " people signed in"));
+    var ul = el("ul", "people");
+    people.list.forEach(function (p) {
+      var li = el("li");
+      li.appendChild(p.name ? own(el("strong", "", p.name)) : el("strong", "", "No name yet"));
+      li.appendChild(own(el("span", "muted", p.email)));
+      if (p.seen) li.appendChild(el("div", "muted", "Last seen " + new Date(p.seen).toLocaleDateString(LOC, { day: "numeric", month: "short", year: "numeric" })));
+      ul.appendChild(li);
+    });
+    c.appendChild(ul);
+    var r = el("div", "row"), b = el("button", "btn ghost", "Refresh list"); b.type = "button";
+    b.addEventListener("click", function () { loadPeople(); });
+    r.appendChild(b); c.appendChild(r);
+    return c;
+  }
+
   function syncSoon() { if (!sync.uid) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 1200); }
   function typing() { var a = document.activeElement; return !!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) || (typeof dlg !== "undefined" && dlg.open); }
   async function syncNow() {
@@ -3005,6 +3063,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
         break;
       }
       sync.state = "ok"; sync.at = Date.now(); sync.err = "";
+      pushProfile().catch(function () {});
     } catch (e) {
       if (e && e.message === "SIGNED_OUT") { sync.busy = false; return; }
       sync.state = navigator.onLine === false ? "offline" : "err"; sync.err = String(e && e.message || e);
@@ -3028,7 +3087,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     try {
       var j = await fbAuth(create ? "signUp" : "signInWithPassword", { email: email, password: pw, returnSecureToken: true });
       sync.uid = j.localId; sync.email = j.email || email; sync.refresh = j.refreshToken; sync.idToken = j.idToken;
-      sync.exp = Date.now() + (Number(j.expiresIn) || 3600) * 1000 - 120000; sync.base = null;
+      sync.exp = Date.now() + (Number(j.expiresIn) || 3600) * 1000 - 120000; sync.base = null; sync.seen = "";
       syncKeep();
       syncDraft = { email: "", pw: "", msg: "", busy: false };
       toast(create ? "Account created. Your data is now syncing." : "Logged in. Syncing your data.");
@@ -3077,9 +3136,11 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       var so = el("button", "btn ghost", "Log out"); so.type = "button";
       so.addEventListener("click", function () { syncSignOut(); toast("Logged out. Your data stays on this device."); });
       r.appendChild(sn); r.appendChild(so); c.appendChild(r);
+      c.appendChild(el("p", "muted", OWNER_SEES));
       return c;
     }
     c.appendChild(el("p", "muted", "Keep your PC and phone in step. Create an account once, then log in with it on each device. What's already on this device is kept and added in."));
+    c.appendChild(el("p", "muted", OWNER_SEES));
     function fld(id, label, type, key, ac) {
       var f = el("div", "field"), l = el("label", "", label); l.setAttribute("for", id);
       var i = document.createElement("input"); i.type = type; i.id = id; i.value = syncDraft[key]; i.autocomplete = ac;
@@ -3104,7 +3165,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
 
   function startSync() {
     if (!CLOUD) return;
-    try { var k = JSON.parse(localStorage.getItem(SYNC_KEY) || "null"); if (k && k.uid && k.refresh) { sync.uid = k.uid; sync.email = k.email || ""; sync.refresh = k.refresh; sync.base = k.base || null; } } catch (e) {}
+    try { var k = JSON.parse(localStorage.getItem(SYNC_KEY) || "null"); if (k && k.uid && k.refresh) { sync.uid = k.uid; sync.email = k.email || ""; sync.refresh = k.refresh; sync.base = k.base || null; sync.seen = k.seen || ""; } } catch (e) {}
     if (sync.uid) syncNow();
     setInterval(function () { if (document.visibilityState === "visible") syncNow(); else showSync(); }, 30000);
     setInterval(showSync, 10000);
@@ -3151,6 +3212,8 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var PATTERNS = [
     // tasks
     [/^Hi, (.+)$/, "Hi, {1}"],
+    [/^(\d+) people signed in$/, "{1} people signed in"],
+    [/^Last seen (.+)$/, "Last seen {1}"],
     [/^Version from (.+)\. Updates by itself\.$/, "Version from {1}. Updates by itself."],
     [/^(\d+) of (\d+) done$/, "{1} of {2} done"],
     [/^Overdue by (\d+) days$/, "Overdue by {1} days"],
@@ -3553,6 +3616,13 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       "Checking for updates…": ["Controllo aggiornamenti…", "Se caută actualizări…", "Recherche de mises à jour…", "Suche nach Updates…", "Buscando actualizaciones…"],
       "Couldn't check for updates. It tries again by itself every hour.": ["Impossibile controllare gli aggiornamenti. Riprova da sola ogni ora.", "Nu am putut căuta actualizări. Reîncearcă singură în fiecare oră.", "Impossible de chercher les mises à jour. Nouvel essai automatique toutes les heures.", "Updates konnten nicht geprüft werden. Es wird jede Stunde automatisch erneut versucht.", "No se pudieron buscar actualizaciones. Lo reintenta sola cada hora."],
       "A bigger update is out. Install the new version to get it.": ["È uscito un aggiornamento più grande. Installa la nuova versione per averlo.", "A apărut o actualizare mai mare. Instalează noua versiune ca să o ai.", "Une mise à jour plus importante est sortie. Installez la nouvelle version pour l'obtenir.", "Ein größeres Update ist da. Installiere die neue Version, um es zu bekommen.", "Hay una actualización mayor. Instala la nueva versión para tenerla."],
+      "The app's owner can see your name, your email and when you last used the app. Not your tasks.": ["Il proprietario dell'app può vedere il tuo nome, la tua email e quando hai usato l'app l'ultima volta. Non le tue attività.", "Proprietarul aplicației îți poate vedea numele, emailul și când ai folosit ultima dată aplicația. Nu și sarcinile.", "Le propriétaire de l'app peut voir votre nom, votre e-mail et votre dernière utilisation. Pas vos tâches.", "Der Besitzer der App kann deinen Namen, deine E-Mail und deine letzte Nutzung sehen. Nicht deine Aufgaben.", "El propietario de la app puede ver tu nombre, tu correo y cuándo usaste la app por última vez. No tus tareas."],
+      "People": ["Persone", "Persoane", "Personnes", "Personen", "Personas"],
+      "1 person signed in": ["1 persona registrata", "1 persoană conectată", "1 personne connectée", "1 Person angemeldet", "1 persona conectada"],
+      "{1} people signed in": ["{1} persone registrate", "{1} persoane conectate", "{1} personnes connectées", "{1} Personen angemeldet", "{1} personas conectadas"],
+      "No name yet": ["Ancora senza nome", "Încă fără nume", "Pas encore de nom", "Noch kein Name", "Aún sin nombre"],
+      "Last seen {1}": ["Ultimo accesso: {1}", "Văzut ultima dată: {1}", "Dernière visite : {1}", "Zuletzt gesehen: {1}", "Última vez: {1}"],
+      "Refresh list": ["Aggiorna elenco", "Reîmprospătează lista", "Actualiser la liste", "Liste aktualisieren", "Actualizar lista"],
       "Update now": ["Aggiorna ora", "Actualizează acum", "Mettre à jour", "Jetzt aktualisieren", "Actualizar ahora"],
       "Check for updates": ["Controlla aggiornamenti", "Caută actualizări", "Chercher des mises à jour", "Nach Updates suchen", "Buscar actualizaciones"],
       "Start on boot only works in the installed version of the app.": ["L'avvio automatico funziona solo nella versione installata.", "Pornirea automată merge doar în versiunea instalată.", "Le lancement au démarrage ne marche que dans la version installée.", "Autostart funktioniert nur in der installierten Version.", "El inicio automático solo funciona en la versión instalada."],
