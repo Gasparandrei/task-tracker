@@ -1857,8 +1857,15 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     });
     var cp = document.createElement("input"); cp.type = "color"; cp.value = state.settings[key]; cp.id = "custom-" + key;
     cp.setAttribute("aria-label", label + ", custom colour");
-    cp.addEventListener("input", function () { state.settings[key] = cp.value; applyColors(); });
-    cp.addEventListener("change", function () { state.settings[key] = cp.value; changed(); });
+    // No render() here: iPhones fire these on every tap inside their colour picker,
+    // and redrawing Settings would replace this input and close the picker.
+    function pick(keep) {
+      state.settings[key] = cp.value; applyColors();
+      row.querySelectorAll(".sw").forEach(function (b, i) { b.setAttribute("aria-pressed", String(cp.value.toLowerCase() === list[i][1].toLowerCase())); });
+      if (keep) save();
+    }
+    cp.addEventListener("input", function () { pick(false); });
+    cp.addEventListener("change", function () { pick(true); });
     row.appendChild(cp);
     f.appendChild(row);
     return f;
