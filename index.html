@@ -637,7 +637,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     once:   { label: "One time" }
   };
   var ONCE_COINS = 20, ONCE_EARLY = 10;
-  var DEFAULTS = { name: "", primary: "#0A8580", secondary: "#D9383F", clock24: true, checkFx: true, theme: "auto", mascot: "classic", notify: true, loud: true, evNotify: true, autoFreeze: true, streakAt: "20:00", runOnStart: false, startHidden: true, keepTray: true, borderless: false, glass: false, glassLevel: 35, lang: "auto" };
+  var DEFAULTS = { name: "", primary: "#0A8580", secondary: "#D9383F", checkColor: "", clock24: true, checkFx: true, theme: "auto", mascot: "classic", notify: true, loud: true, evNotify: true, autoFreeze: true, streakAt: "20:00", runOnStart: false, startHidden: true, keepTray: true, borderless: false, glass: false, glassLevel: 35, lang: "auto" };
   var HOST_THEME = document.documentElement.getAttribute("data-theme");
   var DESK = window.desktopAPI || null; // set by the desktop app; null in a browser
   // The installable app (PWA): neither the desktop app nor the Claude page, so data lives in this browser's storage.
@@ -652,6 +652,9 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
   var deskInfo = { packaged: true }, deskUpd = null;
   var PRIMARIES = [["Teal", "#0A8580"], ["Blue", "#2457D6"], ["Purple", "#6B46C1"], ["Green", "#2B7A3D"], ["Slate", "#37475A"], ["Orange", "#B85C0E"]];
   var SECONDARIES = [["Red", "#D9383F"], ["Orange", "#E8710A"], ["Pink", "#D6409F"], ["Blue", "#2F7BEA"], ["Purple", "#8B5CF6"], ["Yellow", "#F5B800"]];
+  // Check mark colour: "" keeps the theme's green, "secondary" follows the secondary colour, otherwise a hex.
+  var CHECKS = [["Default green", "", "#2E9F4F"], ["Same as secondary colour", "secondary", "var(--secondary)"]].concat(SECONDARIES);
+  function checkHex(s) { return s.checkColor === "secondary" ? validHex(s.secondary, DEFAULTS.secondary) : validHex(s.checkColor, ""); }
   var CAT_HINTS = ["Study", "Training", "Health", "Work", "Home", "Money"];
   var SUGGEST = [
     { title: "Make bed in the morning", type: "daily", target: 1, cat: "Home" },
@@ -791,6 +794,9 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var p = validHex(s.primary, DEFAULTS.primary), q = validHex(s.secondary, DEFAULTS.secondary);
     root.setProperty("--primary", p); root.setProperty("--on-primary", onColor(p));
     root.setProperty("--secondary", q); root.setProperty("--on-secondary", onColor(q));
+    var ck = checkHex(s);
+    if (ck) { root.setProperty("--done", ck); root.setProperty("--on-done", onColor(ck)); }
+    else { root.removeProperty("--done"); root.removeProperty("--on-done"); }
     var th = s.theme === "light" || s.theme === "dark" ? s.theme : HOST_THEME;
     if (th) document.documentElement.setAttribute("data-theme", th); else document.documentElement.removeAttribute("data-theme");
     var tc = document.querySelector('meta[name="theme-color"]'); if (tc) tc.setAttribute("content", p);
@@ -826,6 +832,7 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     var s = Object.assign({}, DEFAULTS, d && d.settings && typeof d.settings === "object" ? d.settings : {});
     s.name = typeof s.name === "string" ? s.name.slice(0, 40) : "";
     s.primary = validHex(s.primary, DEFAULTS.primary); s.secondary = validHex(s.secondary, DEFAULTS.secondary);
+    s.checkColor = s.checkColor === "secondary" ? "secondary" : validHex(s.checkColor, "");
     s.clock24 = s.clock24 !== false;
     s.checkFx = s.checkFx !== false;
     s.theme = s.theme === "light" || s.theme === "dark" ? s.theme : "auto";
@@ -1853,12 +1860,13 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
     f.appendChild(el("div", "flabel", label));
     var row = el("div", "swatches"); row.setAttribute("role", "group"); row.setAttribute("aria-label", label);
     list.forEach(function (c) {
-      var b = el("button", "sw"); b.type = "button"; b.style.background = c[1];
+      var b = el("button", "sw"); b.type = "button"; b.style.background = c[2] || c[1];
       b.setAttribute("aria-label", c[0]); b.setAttribute("aria-pressed", String(state.settings[key].toLowerCase() === c[1].toLowerCase()));
       b.addEventListener("click", function () { state.settings[key] = c[1]; changed(); });
       row.appendChild(b);
     });
-    var cp = document.createElement("input"); cp.type = "color"; cp.value = state.settings[key]; cp.id = "custom-" + key;
+    var cp = document.createElement("input"); cp.type = "color"; cp.id = "custom-" + key;
+    cp.value = key === "checkColor" ? (checkHex(state.settings) || "#2E9F4F") : state.settings[key];
     cp.setAttribute("aria-label", label + ", custom colour");
     // No render() here: iPhones fire these on every tap inside their colour picker,
     // and redrawing Settings would replace this input and close the picker.
@@ -2103,8 +2111,9 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
 
     card.appendChild(swatchRow("Primary colour (header and bottom bar)", PRIMARIES, "primary"));
     card.appendChild(swatchRow("Secondary colour (Tasks tab and highlights)", SECONDARIES, "secondary"));
+    card.appendChild(swatchRow("Check mark colour", CHECKS, "checkColor"));
     var rc = el("button", "btn ghost", "Reset colours"); rc.type = "button";
-    rc.addEventListener("click", function () { state.settings.primary = DEFAULTS.primary; state.settings.secondary = DEFAULTS.secondary; changed(); });
+    rc.addEventListener("click", function () { state.settings.primary = DEFAULTS.primary; state.settings.secondary = DEFAULTS.secondary; state.settings.checkColor = ""; changed(); });
     var rcw = el("div", "row"); rcw.appendChild(rc); card.appendChild(rcw);
 
     var sw = el("label", "switch");
@@ -3631,6 +3640,9 @@ html.bl::after { content: ""; position: fixed; inset: 0; border: 1px solid var(-
       "Primary colour (header and bottom bar)": ["Colore principale (intestazione e barra in basso)", "Culoarea principală (antet și bara de jos)", "Couleur principale (en-tête et barre du bas)", "Hauptfarbe (Kopfzeile und untere Leiste)", "Color principal (cabecera y barra inferior)"],
       "Secondary colour (Tasks tab and highlights)": ["Colore secondario (scheda Attività ed evidenziazioni)", "Culoarea secundară (fila Sarcini și evidențieri)", "Couleur secondaire (onglet Tâches et accents)", "Zweitfarbe (Tab Aufgaben und Hervorhebungen)", "Color secundario (pestaña Tareas y resaltados)"],
       "{1}, custom colour": ["{1}, colore personalizzato", "{1}, culoare personalizată", "{1}, couleur personnalisée", "{1}, eigene Farbe", "{1}, color personalizado"],
+      "Check mark colour": ["Colore della spunta", "Culoarea bifei", "Couleur de la coche", "Farbe des Häkchens", "Color de la marca"],
+      "Default green": ["Verde predefinito", "Verde implicit", "Vert par défaut", "Standardgrün", "Verde predeterminado"],
+      "Same as secondary colour": ["Come il colore secondario", "La fel ca culoarea secundară", "Comme la couleur secondaire", "Wie die Zweitfarbe", "Igual que el color secundario"],
       "Reset colours": ["Ripristina colori", "Resetează culorile", "Couleurs par défaut", "Farben zurücksetzen", "Restablecer colores"],
       "Teal": ["Verde acqua", "Turcoaz", "Sarcelle", "Petrol", "Verde azulado"],
       "Blue": ["Blu", "Albastru", "Bleu", "Blau", "Azul"],
